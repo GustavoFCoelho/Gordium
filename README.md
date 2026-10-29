@@ -116,6 +116,10 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping
   dentro de `100.88.0.0/16`. Jogos e servidores precisam ser permitidos no firewall (o Windows
   costuma perguntar na primeira vez).
+- **Transmitir jogos.** Ao escolher uma janela que ocupa o monitor inteiro (jogo em tela cheia
+  ou sem borda), o app transmite o monitor dela, o método mais confiável no Windows: não falha
+  quando o jogo perde o foco nem quando outra janela passa por cima. Janelas minimizadas não
+  aparecem na lista de janelas (limitação do Windows/Chromium); para jogos, prefira a aba Telas.
 - **Janelas que aparecem pretas.** Para não aparecer a borda amarela que o Windows 10 desenha em
   volta do que está sendo capturado, janelas são capturadas pelo método GDI (no Master Duel a
   1080p: 55 fps, contra 32 fps do método moderno). Algumas janelas, como apps da Microsoft Store

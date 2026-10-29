@@ -76,6 +76,18 @@ export interface ScreenSource {
   name: string
   thumbnail: string
   kind: 'screen' | 'window'
+  /** Janela que ocupa o monitor inteiro (jogo em tela cheia): é transmitida pelo monitor. */
+  fullscreen: boolean
+  /** Fonte do monitor onde a janela está. */
+  screenId: string | null
+}
+
+/** O que vai ser transmitido depois de escolher uma fonte. */
+export interface ScreenChoice {
+  surface: 'screen' | 'window'
+  /** A janela escolhida estava em tela cheia e virou captura do monitor dela. */
+  viaMonitor: boolean
+  name: string
 }
 
 /** unsupported = rodando fora do instalador (modo de desenvolvimento). */

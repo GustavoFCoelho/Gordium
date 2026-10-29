@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import type { AppState, PeerInfo, RtcSignal } from '../../../shared/types'
+import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
+import { toast } from '../store'
 import { playCue, type Cue } from './sounds'
 
 const api = window.gordium
@@ -297,9 +298,9 @@ class CallManager {
     await this.publish()
   }
 
-  async startScreen(sourceId: string, audio: boolean, quality: ScreenQuality): Promise<void> {
-    if (!this.network) return
-    await api.selectScreenSource(sourceId, audio)
+  async startScreen(sourceId: string, audio: boolean, quality: ScreenQuality): Promise<ScreenChoice | null> {
+    if (!this.network) return null
+    const choice = await api.selectScreenSource(sourceId, audio)
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
       // O som do computador vai como é: os filtros de voz (eco, ruído, ganho
@@ -311,12 +312,17 @@ class CallManager {
     const video = stream.getVideoTracks()[0]
     // 60 fps: prioriza fluidez (jogos); 30 fps: prioriza nitidez (texto, código).
     video.contentHint = quality.fps >= 60 ? 'motion' : 'detail'
-    video.addEventListener('ended', () => void this.stopScreen())
+    // 'ended' só dispara quando a fonte acaba sozinha (janela fechada, monitor desligado).
+    video.addEventListener('ended', () => {
+      toast('A transmissão parou: a janela ou tela deixou de estar disponível.', 'error')
+      void this.stopScreen()
+    })
     this.screenQuality = quality
     this.setLocal('screen', video)
     this.setLocal('screenAudio', stream.getAudioTracks()[0] ?? null)
     for (const link of this.links.values()) this.applyEncodings(link)
     await this.publish()
+    return choice
   }
 
   async stopScreen(): Promise<void> {

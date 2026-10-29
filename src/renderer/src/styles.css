@@ -1322,6 +1322,33 @@ label select {
   min-width: 0;
 }
 
+.source {
+  position: relative;
+}
+
+.source-badge {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  max-width: calc(100% - 28px);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(35, 165, 90, 0.92);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.picker-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: rgba(240, 178, 50, 0.12);
+  border-left: 3px solid var(--yellow);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
 .source:hover {
   background: var(--bg-active);
 }

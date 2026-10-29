@@ -3,11 +3,12 @@ import { statSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
-import type { RtcSignal, ScreenSource } from '../shared/types'
+import type { RtcSignal, ScreenChoice, ScreenSource } from '../shared/types'
 import { Core } from './core'
 import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
 import { isProcessAdmin } from './vpn/wintun'
+import { windowPlacement } from './windows'
 
 // GORDIUM_PROFILE=b permite rodar uma segunda instância (outro usuário) na mesma máquina.
 const profile = (process.env.GORDIUM_PROFILE ?? '').replace(/[^a-z0-9_-]/gi, '')
@@ -189,20 +190,39 @@ function setupIpc(): void {
       thumbnailSize: { width: 320, height: 180 }
     })
     screenSources.clear()
+    const screenOfDisplay = new Map(sources.filter((s) => s.display_id).map((s) => [s.display_id, s.id]))
     return sources.map((s) => {
       screenSources.set(s.id, s)
+      const kind = s.id.startsWith('screen:') ? 'screen' : 'window'
+      const place = kind === 'window' ? windowPlacement(s.id) : null
       return {
         id: s.id,
         name: s.name,
         thumbnail: s.thumbnail.toDataURL(),
-        kind: s.id.startsWith('screen:') ? 'screen' : 'window'
+        kind,
+        fullscreen: place?.fullscreen ?? false,
+        screenId: place?.display ? (screenOfDisplay.get(String(place.display.id)) ?? null) : null
       }
     })
   })
-  ipcMain.handle('screen:select', (_e, id: string, audio: boolean) => {
-    const source = screenSources.get(id)
+  ipcMain.handle('screen:select', (_e, id: string, audio: boolean): ScreenChoice => {
+    let source = screenSources.get(id)
     if (!source) throw new Error('Essa tela ou janela não está mais disponível.')
+    let viaMonitor = false
+    if (source.id.startsWith('window:')) {
+      // Janela que ocupa o monitor inteiro (jogo em tela cheia): captura o monitor.
+      // É o método mais confiável no Windows: não depende da janela estar na frente,
+      // não some quando o jogo perde o foco e não desenha borda amarela.
+      const place = windowPlacement(source.id)
+      const displayId = place?.fullscreen && place.display ? String(place.display.id) : null
+      const monitor = displayId ? [...screenSources.values()].find((s) => s.display_id === displayId) : undefined
+      if (monitor) {
+        source = monitor
+        viaMonitor = true
+      }
+    }
     pendingCapture = { source, audio: !!audio }
+    return { surface: source.id.startsWith('screen:') ? 'screen' : 'window', viaMonitor, name: source.name }
   })
 
   ipcMain.handle('vpn:start', () => core.startVpn())

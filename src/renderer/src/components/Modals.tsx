@@ -386,6 +386,7 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
   const [quality, setQuality] = useState(1)
   const [audio, setAudio] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     api.getScreenSources().then(
@@ -399,13 +400,25 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
 
   const start = async () => {
     if (!selected) return
+    const source = sources?.find((s) => s.id === selected)
     setBusy(true)
+    setNotice(null)
     try {
-      await call.startScreen(selected, audio, SCREEN_QUALITIES[quality])
+      const choice = await call.startScreen(selected, audio, SCREEN_QUALITIES[quality])
+      if (choice?.viaMonitor && source) {
+        toast(`"${source.name}" está em tela cheia: transmitindo o monitor inteiro onde ela está.`)
+      }
       onClose()
     } catch (err) {
-      toast(`Não foi possível compartilhar: ${errorText(err)}`, 'error')
       setBusy(false)
+      // Janela que não deu para capturar: oferece o monitor dela, que sempre funciona.
+      if (source?.kind === 'window' && source.screenId) {
+        setKind('screen')
+        setSelected(source.screenId)
+        setNotice(`Não deu para capturar só a janela "${source.name}". O monitor onde ela está já ficou selecionado: clique em Transmitir.`)
+      } else {
+        toast(`Não foi possível compartilhar: ${errorText(err)}`, 'error')
+      }
     }
   }
 
@@ -426,10 +439,22 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
         {list.map((s) => (
           <button key={s.id} className={`source${selected === s.id ? ' selected' : ''}`} onClick={() => setSelected(s.id)} onDoubleClick={() => void start()}>
             <img src={s.thumbnail} alt="" />
+            {s.fullscreen && (
+              <span className="source-badge" title="Janela em tela cheia: o monitor inteiro dela é transmitido, o jeito mais confiável">
+                Tela cheia · transmite o monitor
+              </span>
+            )}
             <span className="ellipsis">{s.name}</span>
           </button>
         ))}
       </div>
+      {kind === 'window' && !notice && (
+        <p className="hint small">
+          Janelas minimizadas não aparecem aqui. Para jogos, a aba <b>Telas</b> é a mais confiável: o monitor continua sendo
+          transmitido mesmo quando o jogo perde o foco.
+        </p>
+      )}
+      {notice && <div className="picker-notice">{notice}</div>}
       <div className="screen-options">
         <label>
           Qualidade

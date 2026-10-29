@@ -1,4 +1,4 @@
-import type { AppState, ChatMessage, RtcSignal, ScreenSource, UpdateState, VoiceState } from '../shared/types'
+import type { AppState, ChatMessage, RtcSignal, ScreenChoice, ScreenSource, UpdateState, VoiceState } from '../shared/types'
 
 /** API que o preload expõe para a interface em window.gordium. */
 export interface GordiumApi {
@@ -19,7 +19,7 @@ export interface GordiumApi {
   onSignal(cb: (network: string, peer: string, signal: RtcSignal) => void): () => void
 
   getScreenSources(): Promise<ScreenSource[]>
-  selectScreenSource(id: string, audio: boolean): Promise<void>
+  selectScreenSource(id: string, audio: boolean): Promise<ScreenChoice>
 
   vpnStart(): Promise<void>
   vpnStop(): Promise<void>
