@@ -58,8 +58,23 @@ jobs:
 
       - run: npm run build
 
-      - name: Instalador e Release
+      - name: Instalador
+        shell: bash
+        run: npx electron-builder --win --publish never -c.releaseInfo.releaseNotesFile=release-notes.md
+
+      # A Release é criada de uma vez, com todos os arquivos. Publicar pelo próprio
+      # electron-builder dispara a criação da release em paralelo para cada arquivo,
+      # e o GitHub recusa a segunda tentativa (a release ficava sem o instalador).
+      - name: Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always -c.releaseInfo.releaseNotesFile=release-notes.md
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release create "v$VERSION" \
+            "dist/Gordium-Setup-$VERSION.exe" \
+            "dist/Gordium-Setup-$VERSION.exe.blockmap" \
+            dist/latest.yml \
+            --title "Gordium $VERSION" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA"
