@@ -15,8 +15,8 @@ extraResources:
     to: wintun/LICENSE.txt
 win:
   target: nsis
-  # A VPN cria um adaptador de rede virtual: só é possível com privilégio de administrador.
-  requestedExecutionLevel: requireAdministrator
+  # O app roda como usuário comum; só o processo da VPN (Gordium.exe --vpn-helper)
+  # é elevado, pelo UAC, quando a VPN é ligada.
   artifactName: Gordium-Setup-${version}.${ext}
 nsis:
   oneClick: false

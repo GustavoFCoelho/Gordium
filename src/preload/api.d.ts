@@ -23,7 +23,6 @@ export interface GordiumApi {
 
   vpnStart(): Promise<void>
   vpnStop(): Promise<void>
-  vpnElevate(): Promise<void>
 
   getUpdate(): Promise<UpdateState>
   onUpdate(cb: (state: UpdateState) => void): () => void

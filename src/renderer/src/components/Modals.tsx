@@ -254,7 +254,7 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
           <div>
             <div className="vpn-title">
               {vpn.state === 'on' && `Ativa · ${vpn.ip}/16`}
-              {vpn.state === 'starting' && 'Iniciando…'}
+              {vpn.state === 'starting' && 'Ativando… confirme a permissão do Windows'}
               {vpn.state === 'off' && 'Desligada'}
               {vpn.state === 'error' && 'Não foi possível ativar'}
               {vpn.state === 'unsupported' && 'Indisponível neste sistema'}
@@ -266,11 +266,6 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
               </div>
             )}
             {vpn.error && <div className="hint small">{vpn.error}</div>}
-            {vpn.state === 'error' && !vpn.isAdmin && !vpn.canElevate && (
-              <div className="hint small">
-                Em modo de desenvolvimento: abra o terminal como administrador e rode <code>npm run dev</code> de novo.
-              </div>
-            )}
           </div>
           <div className="vpn-actions">
             {vpn.state === 'on' && (
@@ -278,14 +273,9 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
                 Desligar
               </button>
             )}
-            {(vpn.state === 'off' || vpn.state === 'error') && vpn.isAdmin && (
+            {(vpn.state === 'off' || vpn.state === 'error') && (
               <button className="button" onClick={() => void api.vpnStart()}>
                 Ativar
-              </button>
-            )}
-            {!vpn.isAdmin && vpn.canElevate && vpn.state !== 'unsupported' && (
-              <button className="button" onClick={() => void api.vpnElevate()}>
-                Reabrir como administrador
               </button>
             )}
           </div>
@@ -293,6 +283,11 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
         <p className="hint small">
           Com a VPN ativa, cada membro tem um IP 100.88.x.y e todos se enxergam como numa rede local: dá para jogar em LAN, acessar
           servidores de jogo e compartilhar pastas. O tráfego vai cifrado de ponta a ponta, direto entre os computadores.
+        </p>
+        <p className="hint small">
+          Criar o adaptador de rede exige permissão de administrador, então o Windows pede confirmação ao ativar. Só o processo da
+          VPN roda como administrador; o resto do Gordium roda como um programa comum. Depois de ativada, a VPN volta a ligar
+          sozinha quando você abrir o app.
         </p>
       </section>
 

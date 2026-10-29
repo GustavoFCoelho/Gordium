@@ -14,14 +14,18 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
 ## Como funciona
 
 ```
- Interface (React)            Processo principal (Node)                 Rede
+ Interface (React)            Processo principal (usuário comum)        Rede
 ┌──────────────────┐ IPC ┌───────────────────────────────┐
 │ chat, sala de voz│◄───►│ Core: identidade, redes, chat │
 │ WebRTC (mídia) ──┼──┐  │ NetworkSession (1 por rede) ──┼──► Hyperswarm: DHT pública +
-└──────────────────┘  │  │ VpnManager ◄─► TunDevice ─────┼─┐  hole punching, conexões Noise
-                      │  └───────────────────────────────┘ │
-                      │        adaptador Wintun "Gordium" ◄┘  (pacotes IP vão nos datagramas
-                      └──► áudio/vídeo P2P (direto, ou pelo túnel da VPN)    cifrados do swarm)
+└──────────────────┘  │  │ VpnManager (rotas, filtros)   │    hole punching, conexões Noise
+                      │  └──────────────┬────────────────┘    (pacotes IP vão nos datagramas
+                      │      named pipe │                      cifrados do swarm)
+                      │  ┌──────────────┴────────────────┐
+                      │  │ Gordium.exe --vpn-helper      │ ← único processo como administrador
+                      │  │ adaptador Wintun "Gordium"    │
+                      │  └───────────────────────────────┘
+                      └──► áudio/vídeo P2P (direto, ou pelo túnel da VPN)
 ```
 
 - **Encontrar os outros sem servidor.** A chave da rede (que vai no convite) gera um tópico.
@@ -36,6 +40,12 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   `100.88.a.b` é lido do adaptador e enviado como datagrama cifrado ao peer dono daquele IP.
   Broadcast e multicast vão para todos, que é como jogos em LAN se descobrem. Pacotes que chegam
   com IP de origem que não é o do peer são descartados.
+- **Só a VPN roda como administrador.** Criar o adaptador exige elevação, mas um Chromium elevado
+  não consegue capturar janelas de outros programas (compartilhar a janela de um jogo falhava).
+  Por isso o app roda como usuário comum e, ao ligar a VPN, abre pelo UAC um processo auxiliar
+  (o próprio `Gordium.exe --vpn-helper`) que cuida só do adaptador. Os dois conversam por um
+  *named pipe* de nome aleatório, autenticado por token; se o app fechar, o auxiliar remove o
+  adaptador e sai. O auxiliar escolhe o DLL e valida IP e nome do adaptador por conta própria.
 - **Mídia.** WebRTC em malha (cada participante se conecta aos outros), com sinalização pelo
   próprio canal P2P. Cada par de participantes tem 4 trilhas fixas (microfone, câmera, tela e
   áudio da tela): ligar a câmera ou a tela é só um `replaceTrack`, sem renegociar. Com a VPN
@@ -50,9 +60,9 @@ npm install          # também baixa o wintun.dll oficial (SHA-256 conferido)
 npm run dev          # abre o app em modo de desenvolvimento
 ```
 
-A VPN precisa de **administrador** (é isso que permite criar o adaptador de rede). Em
-desenvolvimento, abra o terminal como administrador antes do `npm run dev`. Sem admin, voz,
-vídeo e chat funcionam normalmente e só a VPN fica desligada.
+O app roda como usuário comum, inclusive em desenvolvimento. Ao ligar a VPN (Configurações →
+VPN → Ativar), o Windows pede permissão de administrador para o processo da VPN. Depois de
+ativada, ela volta a ligar sozinha quando o app abre.
 
 Para testar com dois usuários no mesmo computador, use perfis diferentes:
 
@@ -63,10 +73,9 @@ $env:GORDIUM_PROFILE = "b"; npm run dev
 ## Instalação e atualizações
 
 Quem vai usar baixa o `Gordium-Setup-x.y.z.exe` da
-[página de Releases](https://github.com/GustavoFCoelho/Gordium/releases/latest) e instala. O app
-pede elevação ao abrir (`requireAdministrator`), como o Hamachi e o Radmin VPN. O instalador não
-tem assinatura digital, então na primeira vez o Windows SmartScreen avisa: é só clicar em
-**Mais informações → Executar assim mesmo**.
+[página de Releases](https://github.com/GustavoFCoelho/Gordium/releases/latest) e instala. O
+instalador não tem assinatura digital, então na primeira vez o Windows SmartScreen avisa: é só
+clicar em **Mais informações → Executar assim mesmo**.
 
 Como uma alteração chega a quem já instalou:
 
@@ -90,7 +99,8 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 |---|---|---|
 | `npm run test:net` | 3 identidades se acham pela DHT pública, autenticam, sincronizam o chat, rejeitam mensagem forjada, trocam estado de voz, sinalização e pacotes da VPN (datagrama e fallback); duas redes ao mesmo tempo; reconexão após reiniciar | internet |
 | `npm run test:e2e` | duas instâncias reais do app controladas pelo DevTools: criar rede, convite, chat, sala de voz, áudio chegando, câmera, tela em 1080p, mute e saída da chamada | internet |
-| `npm run test:vpn` | liga a VPN como o app liga e testa os dois sentidos do túnel com um peer simulado: Windows → túnel, ping injetado respondido pelo Windows e descarte de IP forjado | **terminal como administrador**, Gordium fechado |
+| `npm run test:vpn` | adaptador e roteamento da VPN com um peer simulado: Windows → túnel, ping injetado respondido pelo Windows e descarte de IP forjado | **terminal como administrador** |
+| `npm run test:vpn-helper` | o caminho do app: roda como usuário comum, abre o processo auxiliar pelo UAC e testa os dois sentidos do túnel pelo pipe; ao fechar, confere que o adaptador sumiu | aceitar o UAC |
 | `npm run typecheck` | tipos do processo principal, do preload e da interface | — |
 
 ## Limitações conhecidas

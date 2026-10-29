@@ -9,7 +9,13 @@ import { ChatStore, createMessage, verifyMessage } from './chat'
 import { cleanName, decodeInvite, encodeInvite, networkId, newNetworkKey, virtualIp, type NetworkSecret } from './network/crypto'
 import { NetworkSession, type Peer } from './network/session'
 import { readJson, writeJsonAtomic } from './storage'
-import { VpnManager, type VpnOptions } from './vpn/manager'
+import { VpnManager } from './vpn/manager'
+import type { TunnelOpener } from './vpn/tunnel'
+
+interface Settings {
+  /** Liga a VPN ao abrir o app (a pessoa a ligou da última vez). */
+  vpnAutoStart: boolean
+}
 
 interface StoredIdentity {
   seed: string
@@ -60,10 +66,11 @@ export class Core extends EventEmitter<CoreEvents> {
   private readonly chat: ChatStore
   private voice: { network: string; state: VoiceState } | null = null
   private saveTimer: NodeJS.Timeout | null = null
+  private readonly settings: Settings
 
   constructor(
     private readonly dataDir: string,
-    vpn: Omit<VpnOptions, 'ip'>
+    openTunnel: TunnelOpener
   ) {
     super()
     mkdirSync(dataDir, { recursive: true })
@@ -80,7 +87,8 @@ export class Core extends EventEmitter<CoreEvents> {
     this.vip = virtualIp(this.keyPair.publicKey)
 
     this.chat = new ChatStore(join(dataDir, 'chat'))
-    this.vpn = new VpnManager({ ...vpn, ip: this.vip })
+    this.settings = { vpnAutoStart: false, ...readJson<Partial<Settings>>(this.file('settings.json'), {}) }
+    this.vpn = new VpnManager({ ip: this.vip, open: openTunnel })
     this.vpn.on('changed', () => this.emit('changed'))
   }
 
@@ -96,7 +104,28 @@ export class Core extends EventEmitter<CoreEvents> {
         console.warn('[core] rede inválida ignorada:', (err as Error).message)
       }
     }
-    void this.vpn.start()
+    if (this.settings.vpnAutoStart) void this.startVpn(true)
+  }
+
+  /**
+   * Liga a VPN (o Windows pede permissão de administrador para o processo da VPN).
+   * Se ligou, ela volta a ligar sozinha ao abrir o app. Se falhar ao abrir o app
+   * (por exemplo, UAC negado), para de tentar até a pessoa ligar de novo.
+   */
+  async startVpn(automatic = false): Promise<void> {
+    await this.vpn.start()
+    const on = this.vpn.status.state === 'on'
+    if (on || automatic) this.saveSettings({ vpnAutoStart: on })
+  }
+
+  async stopVpn(): Promise<void> {
+    this.saveSettings({ vpnAutoStart: false })
+    await this.vpn.stop()
+  }
+
+  private saveSettings(patch: Partial<Settings>): void {
+    Object.assign(this.settings, patch)
+    writeJsonAtomic(this.file('settings.json'), this.settings)
   }
 
   async shutdown(): Promise<void> {

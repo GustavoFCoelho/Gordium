@@ -31,7 +31,6 @@ const api: GordiumApi = {
 
   vpnStart: () => ipcRenderer.invoke('vpn:start'),
   vpnStop: () => ipcRenderer.invoke('vpn:stop'),
-  vpnElevate: () => ipcRenderer.invoke('vpn:elevate'),
 
   getUpdate: () => ipcRenderer.invoke('update:get'),
   onUpdate: (cb) => on('update', cb),

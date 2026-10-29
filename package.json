@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test:net": "rolldown ./scripts/net-test.ts --format cjs --platform node --file out/tests/net-test.cjs --external hyperswarm --external hypercore-crypto --external koffi && node out/tests/net-test.cjs",
     "test:vpn": "rolldown ./scripts/vpn-selftest.ts --format cjs --platform node --file out/tests/vpn-selftest.cjs --external hyperswarm --external hypercore-crypto --external koffi && node out/tests/vpn-selftest.cjs",
+    "test:vpn-helper": "node scripts/vpn-helper-test.mjs",
     "test:e2e": "electron-vite build && node scripts/e2e.mjs",
     "dist": "electron-vite build && electron-builder --win"
   },

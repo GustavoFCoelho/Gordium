@@ -1,20 +1,16 @@
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { statSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
 import type { RtcSignal, ScreenSource } from '../shared/types'
 import { Core } from './core'
 import { Updater } from './updater'
+import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
+import { isProcessAdmin } from './vpn/wintun'
 
 // GORDIUM_PROFILE=b permite rodar uma segunda instância (outro usuário) na mesma máquina.
 const profile = (process.env.GORDIUM_PROFILE ?? '').replace(/[^a-z0-9_-]/gi, '')
-if (profile) app.setPath('userData', join(app.getPath('appData'), `Gordium-${profile}`))
-
-// Sem isso o Chromium esconde os IPs locais (inclusive o da VPN) atrás de nomes mDNS,
-// e o WebRTC não consegue usar o túnel do Gordium como caminho.
-app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns')
-
-if (!app.requestSingleInstanceLock()) app.exit(0)
 
 let core: Core
 let updater: Updater
@@ -23,10 +19,78 @@ let quitting = false
 const screenSources = new Map<string, DesktopCapturerSource>()
 let pendingCapture: { source: DesktopCapturerSource; audio: boolean } | null = null
 
-function wintunPath(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'wintun', 'wintun.dll')
-    : join(app.getAppPath(), 'resources', 'wintun', process.arch, 'wintun.dll')
+// O mesmo executável também é o processo auxiliar da VPN (Gordium.exe --vpn-helper),
+// o único que roda como administrador.
+if (isVpnHelper(process.argv)) runVpnHelper(process.argv)
+else startApp()
+
+function startApp(): void {
+  if (app.isPackaged && isProcessAdmin() && relaunchUnelevated()) return
+  if (profile) app.setPath('userData', join(app.getPath('appData'), `Gordium-${profile}`))
+
+  // Sem isso o Chromium esconde os IPs locais (inclusive o da VPN) atrás de nomes mDNS,
+  // e o WebRTC não consegue usar o túnel do Gordium como caminho.
+  app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns')
+
+  if (!app.requestSingleInstanceLock()) return app.exit(0)
+
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
+
+  app.whenReady().then(() => {
+    const adapterName = profile ? `Gordium-${profile}` : 'Gordium'
+    core = new Core(app.getPath('userData'), (ip, handlers) => openHelperTunnel(adapterName, ip, handlers))
+    core.on('changed', pushState)
+    core.on('chat', (network, messages) => send('chat', network, messages))
+    core.on('rtc', (network, peer, signal) => send('rtc', network, peer, signal))
+    updater = new Updater()
+    updater.on('changed', () => send('update', updater.state))
+
+    setupMedia()
+    setupIpc()
+    createWindow()
+    core.init()
+    updater.start()
+
+    // Latência e contadores da VPN mudam sem eventos: atualiza a interface periodicamente.
+    setInterval(pushState, 2000)
+  })
+
+  app.on('window-all-closed', () => app.quit())
+
+  app.on('before-quit', (e) => {
+    if (quitting || !core) return
+    e.preventDefault()
+    quitting = true
+    const timeout = new Promise((r) => setTimeout(r, 4000))
+    // app.quit() (e não app.exit) para o evento 'quit' acontecer: é nele que o
+    // electron-updater instala uma atualização baixada.
+    void Promise.race([core.shutdown(), timeout]).finally(() => app.quit())
+  })
+}
+
+/**
+ * Como administrador o Chromium não captura janelas de outros programas. Isso
+ * acontece logo depois de atualizar a partir da 0.1.2 (que exigia elevação e
+ * reabre a versão nova herdando-a) ou com "Executar como administrador".
+ * Reabre pelo Explorer, que inicia programas como usuário comum. A marca de
+ * tempo evita um laço se o próprio Explorer estiver elevado (UAC desligado).
+ */
+function relaunchUnelevated(): boolean {
+  const marker = join(app.getPath('temp'), 'gordium-unelevate')
+  try {
+    if (Date.now() - statSync(marker).mtimeMs < 60_000) return false
+  } catch {
+    // sem marca recente: pode reabrir
+  }
+  writeFileSync(marker, '')
+  spawn('explorer.exe', [process.execPath], { detached: true, stdio: 'ignore' }).unref()
+  app.exit(0)
+  return true
 }
 
 function send(channel: string, ...args: unknown[]): void {
@@ -95,23 +159,6 @@ function setupMedia(): void {
   })
 }
 
-function relaunchElevated(): void {
-  const quote = (s: string): string => `'${s.replace(/'/g, "''")}'`
-  const args = process.argv.slice(1)
-  const argList = args.length ? ` -ArgumentList ${args.map(quote).join(',')}` : ''
-  // Solta a trava de instância única para a cópia elevada conseguir abrir.
-  app.releaseSingleInstanceLock()
-  execFile(
-    'powershell.exe',
-    ['-NoProfile', '-Command', `Start-Process -FilePath ${quote(process.execPath)}${argList} -Verb RunAs`],
-    { windowsHide: true },
-    (err) => {
-      if (err) app.requestSingleInstanceLock() // UAC cancelado: continua nesta instância
-      else app.exit(0)
-    }
-  )
-}
-
 function setupIpc(): void {
   ipcMain.handle('state:get', () => core.state())
   ipcMain.handle('chat:list', (_e, network: string) => core.messages(network))
@@ -145,52 +192,10 @@ function setupIpc(): void {
     pendingCapture = { source, audio: !!audio }
   })
 
-  ipcMain.handle('vpn:start', () => core.vpn.start())
-  ipcMain.handle('vpn:stop', () => core.vpn.stop())
-  ipcMain.handle('vpn:elevate', () => relaunchElevated())
+  ipcMain.handle('vpn:start', () => core.startVpn())
+  ipcMain.handle('vpn:stop', () => core.stopVpn())
 
   ipcMain.handle('update:get', () => updater.state)
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.handle('update:install', () => updater.install())
 }
-
-app.on('second-instance', () => {
-  if (win) {
-    if (win.isMinimized()) win.restore()
-    win.focus()
-  }
-})
-
-app.whenReady().then(() => {
-  core = new Core(app.getPath('userData'), {
-    dllPath: wintunPath(),
-    adapterName: profile ? `Gordium-${profile}` : 'Gordium',
-    canElevate: app.isPackaged
-  })
-  core.on('changed', pushState)
-  core.on('chat', (network, messages) => send('chat', network, messages))
-  core.on('rtc', (network, peer, signal) => send('rtc', network, peer, signal))
-  updater = new Updater()
-  updater.on('changed', () => send('update', updater.state))
-
-  setupMedia()
-  setupIpc()
-  createWindow()
-  core.init()
-  updater.start()
-
-  // Latência e contadores da VPN mudam sem eventos: atualiza a interface periodicamente.
-  setInterval(pushState, 2000)
-})
-
-app.on('window-all-closed', () => app.quit())
-
-app.on('before-quit', (e) => {
-  if (quitting || !core) return
-  e.preventDefault()
-  quitting = true
-  const timeout = new Promise((r) => setTimeout(r, 4000))
-  // app.quit() (e não app.exit) para o evento 'quit' acontecer: é nele que o
-  // electron-updater instala uma atualização baixada.
-  void Promise.race([core.shutdown(), timeout]).finally(() => app.quit())
-})

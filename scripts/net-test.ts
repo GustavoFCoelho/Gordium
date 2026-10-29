@@ -9,10 +9,14 @@ import { join } from 'node:path'
 import { Core } from '../src/main/core'
 
 const dirs: string[] = []
+// O teste de rede não liga a VPN (isso é o test:vpn, como administrador).
+const noVpn = async (): Promise<never> => {
+  throw new Error('VPN desativada no teste')
+}
 function mkCore(label: string): Core {
   const dir = mkdtempSync(join(tmpdir(), `gordium-${label}-`))
   dirs.push(dir)
-  const c = new Core(dir, { dllPath: 'nao-existe.dll', adapterName: 'teste', canElevate: false })
+  const c = new Core(dir, noVpn)
   c.init()
   return c
 }
@@ -30,7 +34,7 @@ async function main() {
   const a = mkCore('a'), b = mkCore('b')
   a.setName('Alice'); b.setName('Bruno')
   console.log('A', a.vip, a.selfId.slice(0, 8), '| B', b.vip, b.selfId.slice(0, 8))
-  console.log('VPN (sem admin):', a.state().vpn.state, '-', a.state().vpn.error)
+  console.log('VPN (desativada neste teste):', a.state().vpn.state)
 
   const net = a.createNetwork('Rede de Teste')
   const invite = a.state().networks[0].invite
@@ -100,7 +104,7 @@ async function main() {
   const dirB = dirs[1]
   await b.shutdown()
   await until('A percebe B offline', () => !online(a, b.selfId), 30000)
-  const b2 = new Core(dirB, { dllPath: 'nao-existe.dll', adapterName: 'teste', canElevate: false })
+  const b2 = new Core(dirB, noVpn)
   b2.init()
   await until('B reconecta após reiniciar', () => online(a, b2.selfId) && online(b2, a.selfId), 90000)
 

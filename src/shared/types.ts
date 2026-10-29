@@ -52,9 +52,6 @@ export type VpnState = 'off' | 'starting' | 'on' | 'error' | 'unsupported'
 export interface VpnStatus {
   state: VpnState
   ip: string | null
-  isAdmin: boolean
-  /** Pode relançar elevado sozinho (app empacotado). */
-  canElevate: boolean
   error: string | null
   /** Bytes que este computador mandou pela VPN. */
   sentBytes: number

@@ -28,7 +28,6 @@ export interface WintunApi {
   /** Espera o evento numa thread de trabalho do koffi, sem travar o event loop. */
   wait(handle: Ptr, ms: number): Promise<number>
   luidToIndex(luid: bigint | number): number | null
-  isAdmin(): boolean
 }
 
 export const ERROR_NO_MORE_ITEMS = 259
@@ -43,7 +42,6 @@ export function loadWintun(dllPath: string): WintunApi {
   const lib = koffi.load(dllPath)
   const k32 = koffi.load('kernel32.dll')
   const iphlp = koffi.load('iphlpapi.dll')
-  const shell32 = koffi.load('shell32.dll')
 
   koffi.struct('GORDIUM_GUID', {
     Data1: 'uint32_t',
@@ -72,7 +70,6 @@ export function loadWintun(dllPath: string): WintunApi {
   const ConvertInterfaceLuidToIndex = iphlp.func(
     'uint32_t __stdcall ConvertInterfaceLuidToIndex(const uint64_t *InterfaceLuid, _Out_ uint32_t *InterfaceIndex)'
   )
-  const IsUserAnAdmin = shell32.func('bool __stdcall IsUserAnAdmin()')
 
   api = {
     createAdapter: (name, type, guid) => CreateAdapter(name, type, guid),
@@ -95,8 +92,7 @@ export function loadWintun(dllPath: string): WintunApi {
     luidToIndex: (luid) => {
       const out: [number] = [0]
       return ConvertInterfaceLuidToIndex([luid], out) === 0 ? out[0] : null
-    },
-    isAdmin: () => IsUserAnAdmin()
+    }
   }
   return api
 }
