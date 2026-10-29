@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
 import type { RtcSignal, ScreenSource } from '../shared/types'
@@ -68,6 +69,18 @@ function createWindow(): void {
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+/**
+ * Som do computador SEM o som do próprio Gordium. Com o 'loopback' comum, as
+ * vozes da chamada (que o app está tocando) entravam na transmissão da tela e
+ * todo mundo se ouvia em dobro. 'loopbackWithoutChrome' é um dispositivo do
+ * Chromium que usa o process loopback do Windows (10 versão 2004+, build 19041)
+ * para excluir a árvore de processos do app; o Electron ainda não o lista nos
+ * tipos, mas o repassa. Em Windows mais antigo, fica o loopback comum.
+ */
+const SYSTEM_AUDIO = (process.platform === 'win32' && Number(release().split('.')[2]) >= 19041
+  ? 'loopbackWithoutChrome'
+  : 'loopback') as 'loopback'
+
 function setupMedia(): void {
   const allowed = new Set(['media', 'display-capture', 'clipboard-sanitized-write', 'speaker-selection', 'fullscreen'])
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)))
@@ -78,7 +91,7 @@ function setupMedia(): void {
     const pick = pendingCapture
     pendingCapture = null
     if (!pick) return callback({})
-    callback(pick.audio ? { video: pick.source, audio: 'loopback' } : { video: pick.source })
+    callback(pick.audio ? { video: pick.source, audio: SYSTEM_AUDIO } : { video: pick.source })
   })
 }
 

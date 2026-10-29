@@ -271,7 +271,9 @@ class CallManager {
     await api.selectScreenSource(sourceId, audio)
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
-      audio
+      // O som do computador vai como é: os filtros de voz (eco, ruído, ganho
+      // automático) vêm ligados por padrão e estragam música e som de jogo.
+      audio: audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
     })
     this.local.screen?.stop()
     this.local.screenAudio?.stop()

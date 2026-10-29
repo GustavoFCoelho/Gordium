@@ -442,7 +442,7 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
             ))}
           </select>
         </label>
-        <label className="check" title="Transmite todo o som do computador, inclusive o da chamada: os outros podem ouvir um eco da própria voz.">
+        <label className="check" title="Transmite o som dos outros programas (jogo, música, vídeo). As vozes da chamada ficam de fora, então ninguém se ouve em dobro.">
           <input type="checkbox" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
           Transmitir áudio do computador
         </label>

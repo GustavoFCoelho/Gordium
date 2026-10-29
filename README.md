@@ -106,7 +106,8 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping
   dentro de `100.88.0.0/16`. Jogos e servidores precisam ser permitidos no firewall (o Windows
   costuma perguntar na primeira vez).
-- **Áudio da tela.** A captura do áudio do computador inclui o som da própria chamada, então os
-  outros podem ouvir eco da própria voz.
+- **Áudio da tela em Windows antigo.** O som do computador é capturado sem o som do próprio
+  Gordium (as vozes da chamada não voltam na transmissão), o que depende do Windows 10 versão 2004
+  ou mais novo. Em versões anteriores, os outros podem ouvir eco da própria voz.
 - **Dados locais.** A identidade, as chaves das redes e o histórico ficam em `%APPDATA%\Gordium`
   sem criptografia em disco.
