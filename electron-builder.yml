@@ -15,6 +15,7 @@ extraResources:
     to: wintun/LICENSE.txt
 win:
   target: nsis
+  icon: build/icon.ico
   # O app roda como usuário comum; só o processo da VPN (Gordium.exe --vpn-helper)
   # é elevado, pelo UAC, quando a VPN é ligada.
   artifactName: Gordium-Setup-${version}.${ext}

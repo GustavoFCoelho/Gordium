@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { NetworkInfo } from '../../shared/types'
+import logo from './assets/logo.png'
 import { CallView } from './components/CallView'
 import { ChatView } from './components/ChatView'
 import { HashIcon, ShieldIcon, UsersIcon, VolumeIcon } from './components/Icons'
@@ -36,7 +37,7 @@ function Toasts() {
 function Welcome({ onAdd }: { onAdd(tab: 'create' | 'join'): void }) {
   return (
     <div className="welcome">
-      <div className="welcome-logo">G</div>
+      <img className="welcome-logo" src={logo} alt="" draggable={false} />
       <h1>Bem-vindo ao Gordium</h1>
       <p>
         Voz, vídeo, chat e uma VPN entre amigos, sem servidor: cada rede existe só entre os computadores de quem participa.

@@ -1,4 +1,5 @@
 import type { NetworkInfo } from '../../../shared/types'
+import logo from '../assets/logo.png'
 import { useCall } from '../rtc/call'
 import { useUnread, useUpdate } from '../store'
 import { colorFor, initials } from '../util'
@@ -41,9 +42,7 @@ export function ServerRail({ networks, active, onSelect, onAdd, onUpdate }: Prop
   const update = useUpdate()
   return (
     <nav className="rail">
-      <div className="rail-logo" title="Gordium">
-        G
-      </div>
+      <img className="rail-logo" src={logo} alt="Gordium" title="Gordium" draggable={false} />
       <div className="rail-sep" />
       {networks.map((n) => (
         <RailItem key={n.id} network={n} active={n.id === active} onSelect={() => onSelect(n.id)} />

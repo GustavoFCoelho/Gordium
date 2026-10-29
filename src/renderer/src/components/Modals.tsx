@@ -243,6 +243,10 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
             <input type="checkbox" checked={c.settings.noiseSuppression} onChange={(e) => setDevice({ noiseSuppression: e.target.checked })} />
             Supressão de ruído
           </label>
+          <label className="check">
+            <input type="checkbox" checked={c.settings.sounds} onChange={(e) => setDevice({ sounds: e.target.checked })} />
+            Sons de entrada e saída da sala
+          </label>
         </div>
       </section>
 

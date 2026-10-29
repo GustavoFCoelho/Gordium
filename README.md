@@ -116,6 +116,10 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping
   dentro de `100.88.0.0/16`. Jogos e servidores precisam ser permitidos no firewall (o Windows
   costuma perguntar na primeira vez).
+- **Janelas que aparecem pretas.** Para não aparecer a borda amarela que o Windows 10 desenha em
+  volta do que está sendo capturado, janelas são capturadas pelo método GDI (no Master Duel a
+  1080p: 55 fps, contra 32 fps do método moderno). Algumas janelas, como apps da Microsoft Store
+  e conteúdo protegido, podem sair pretas por esse método: nesse caso, compartilhe a tela inteira.
 - **Áudio da tela em Windows antigo.** O som do computador é capturado sem o som do próprio
   Gordium (as vozes da chamada não voltam na transmissão), o que depende do Windows 10 versão 2004
   ou mais novo. Em versões anteriores, os outros podem ouvir eco da própria voz.

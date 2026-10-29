@@ -28,9 +28,20 @@ function startApp(): void {
   if (app.isPackaged && isProcessAdmin() && relaunchUnelevated()) return
   if (profile) app.setPath('userData', join(app.getPath('appData'), `Gordium-${profile}`))
 
-  // Sem isso o Chromium esconde os IPs locais (inclusive o da VPN) atrás de nomes mDNS,
-  // e o WebRTC não consegue usar o túnel do Gordium como caminho.
-  app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns')
+  app.commandLine.appendSwitch(
+    'disable-features',
+    [
+      // Sem isso o Chromium esconde os IPs locais (inclusive o da VPN) atrás de nomes
+      // mDNS, e o WebRTC não consegue usar o túnel do Gordium como caminho.
+      'WebRtcHideLocalIpsWithMdns',
+      // Captura pela Windows Graphics Capture faz o Windows 10 desenhar uma borda
+      // amarela em volta do que está sendo transmitido (e não dá para desligá-la).
+      // Sem ela, janelas usam a captura GDI e telas a DXGI: sem borda, e medido no
+      // Master Duel a 1080p: 55 fps contra 32 fps da WGC.
+      'WebRtcAllowWgcWindowCapturer',
+      'WebRtcAllowWgcScreenCapturer'
+    ].join(',')
+  )
 
   if (!app.requestSingleInstanceLock()) return app.exit(0)
 
@@ -115,6 +126,8 @@ function createWindow(): void {
     backgroundColor: '#1e1f22',
     title: profile ? `Gordium (${profile})` : 'Gordium',
     autoHideMenuBar: true,
+    // Instalado, a janela usa o ícone do executável; em desenvolvimento, o do projeto.
+    icon: app.isPackaged ? undefined : join(app.getAppPath(), 'build', 'icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -117,7 +117,6 @@ a {
   overflow-y: auto;
 }
 
-.rail-logo,
 .rail-button {
   width: 48px;
   height: 48px;
@@ -132,9 +131,9 @@ a {
 }
 
 .rail-logo {
-  background: var(--accent);
-  border-radius: 16px;
-  font-size: 22px;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
 }
 
 .rail-button:hover,
@@ -1045,16 +1044,10 @@ a {
 }
 
 .welcome-logo {
-  width: 88px;
-  height: 88px;
+  display: block;
+  width: 104px;
+  height: 104px;
   margin: 0 auto 16px;
-  border-radius: 28px;
-  background: var(--accent);
-  display: grid;
-  place-items: center;
-  font-size: 44px;
-  font-weight: 700;
-  color: white;
 }
 
 .welcome h1 {

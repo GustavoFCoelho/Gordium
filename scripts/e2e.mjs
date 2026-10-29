@@ -89,6 +89,21 @@ const click = (selector, text) =>
 const fill = (selector, value, enter = false) =>
   `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('não achei ${selector}'); const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); ${enter ? "el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));" : ''} return true })()`
 
+/**
+ * Escuta os sons da sala: registra a nota base (< 1 kHz) de cada oscilador tocado.
+ * Entrada = [587, 880] (subindo); saída = [880, 587] (descendo).
+ */
+const listenCues = `(() => {
+  window.__cues = []
+  const start = OscillatorNode.prototype.start
+  OscillatorNode.prototype.start = function (...args) {
+    if (this.frequency.value < 1000) window.__cues.push(Math.round(this.frequency.value))
+    return start.apply(this, args)
+  }
+  return true
+})()`
+const cuesAre = (list) => `JSON.stringify(window.__cues) === ${JSON.stringify(JSON.stringify(list))}`
+
 const hasText = (selector, text) => `[...document.querySelectorAll(${JSON.stringify(selector)})].some(e => e.textContent.includes(${JSON.stringify(text)}))`
 
 // --- roteiro ------------------------------------------------------------------
@@ -127,10 +142,15 @@ try {
   await A.until('Alice recebe a resposta', hasText('.msg-text', 'sala de voz'))
   await A.shot('03-chat')
 
+  await A.evaluate(listenCues)
+  await B.evaluate(listenCues)
   await A.evaluate(click('.channel', 'Sala de voz'))
+  await A.until('Alice sozinha na sala, com o som de entrada', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada' && ${cuesAre([587, 880])}`)
   await B.evaluate(click('.channel', 'Sala de voz'))
   await A.until('chamada conectada (Alice)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada' && document.querySelectorAll('.tile').length === 2`)
   await B.until('chamada conectada (Bruno)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada'`)
+  await A.until('Alice ouve o som de entrada do Bruno', cuesAre([587, 880, 587, 880]), 10000)
+  await B.until('Bruno ouve só o próprio som de entrada', cuesAre([587, 880]), 5000)
   // o microfone falso emite um bipe: o indicador de fala do outro lado precisa acender
   await B.until('áudio da Alice chegando no Bruno', `!!document.querySelector('.tile.speaking')`, 20000)
 
@@ -151,6 +171,8 @@ try {
 
   await A.evaluate(click('.call-controls .round-button.hangup'))
   await B.until('Bruno vê a Alice sair', `![...document.querySelectorAll('.tile')].some(t => t.textContent.includes('Alice'))`, 15000)
+  await A.until('Alice ouve o próprio som de saída', `JSON.stringify(window.__cues.slice(-2)) === '[880,587]'`, 5000)
+  await B.until('Bruno ouve o som de saída da Alice', cuesAre([587, 880, 880, 587]), 10000)
   log(`TUDO OK · capturas em ${SHOTS}`)
 } catch (err) {
   console.error('FALHOU:', err.message)

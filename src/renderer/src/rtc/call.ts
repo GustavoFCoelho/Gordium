@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { AppState, PeerInfo, RtcSignal } from '../../../shared/types'
+import { playCue, type Cue } from './sounds'
 
 const api = window.gordium
 
@@ -46,6 +47,8 @@ export interface DeviceSettings {
   camId: string
   outputId: string
   noiseSuppression: boolean
+  /** Sons quando alguém entra ou sai da sala de voz. */
+  sounds: boolean
 }
 
 interface Link {
@@ -84,7 +87,13 @@ class CallManager {
   error: string | null = null
   readonly local: Record<MediaKind, MediaStreamTrack | null> = { mic: null, camera: null, screen: null, screenAudio: null }
   readonly speaking = new Set<string>()
-  settings: DeviceSettings = loadJson('gordium.devices', { micId: '', camId: '', outputId: '', noiseSuppression: true })
+  settings: DeviceSettings = loadJson('gordium.devices', {
+    micId: '',
+    camId: '',
+    outputId: '',
+    noiseSuppression: true,
+    sounds: true
+  })
 
   private volumes: Record<string, number> = loadJson('gordium.volumes', {})
   private screenQuality = SCREEN_QUALITIES[0]
@@ -95,6 +104,8 @@ class CallManager {
   private audioCtx: AudioContext | null = null
   private readonly meters = new Map<string, Meter>()
   private meterTimer: number | null = null
+  /** Quem está na sala (fora eu), para os sons de entrada/saída; null = ainda não sabe. */
+  private roomMembers: Set<string> | null = null
 
   constructor() {
     api.onSignal((network, peer, signal) => this.onSignal(network, peer, signal))
@@ -135,6 +146,8 @@ class CallManager {
     if (this.network) await this.leave()
     this.selfId = selfId
     this.error = null
+    this.peers = [] // chegam no próximo syncState, já desta rede
+    this.roomMembers = null
     this.audioCtx = new AudioContext()
     void this.audioCtx.resume()
     try {
@@ -146,6 +159,7 @@ class CallManager {
     this.applyMute()
     if (this.local.mic) this.watch(selfId, this.local.mic)
     this.meterTimer = window.setInterval(() => this.tickMeters(), 100)
+    this.cue('join')
     await this.publish()
     this.syncLinks()
   }
@@ -154,7 +168,9 @@ class CallManager {
     const network = this.network
     if (!network) return
     for (const link of [...this.links.values()]) this.closeLink(link, true)
+    this.cue('leave')
     this.network = null
+    this.roomMembers = null
     for (const k of KINDS) {
       this.local[k]?.stop()
       this.local[k] = null
@@ -178,7 +194,22 @@ class CallManager {
       return
     }
     this.peers = net.peers
+    this.roomSounds()
     this.syncLinks()
+  }
+
+  /** Som quando alguém entra ou sai da sala em que eu estou (cair da conexão conta como sair). */
+  private roomSounds(): void {
+    const now = new Set(this.peers.filter((p) => p.online && p.voice).map((p) => p.id))
+    const before = this.roomMembers
+    this.roomMembers = now
+    if (!before) return // primeira visão da sala: quem já estava não "entrou"
+    if ([...now].some((id) => !before.has(id))) this.cue('join')
+    else if ([...before].some((id) => !now.has(id))) this.cue('leave')
+  }
+
+  private cue(cue: Cue): void {
+    if (this.settings.sounds && !this.deafened) playCue(cue, this.settings.outputId)
   }
 
   private syncLinks(): void {
