@@ -1,0 +1,30 @@
+appId: io.github.gustavofcoelho.gordium
+productName: Gordium
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
+  - package.json
+extraResources:
+  - from: resources/wintun/${arch}/wintun.dll
+    to: wintun/wintun.dll
+  - from: resources/wintun/LICENSE.txt
+    to: wintun/LICENSE.txt
+win:
+  target: nsis
+  # A VPN cria um adaptador de rede virtual: só é possível com privilégio de administrador.
+  requestedExecutionLevel: requireAdministrator
+  artifactName: Gordium-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+# O app instalado procura atualizações nas Releases deste repositório (precisa ser público).
+# A release é criada pelo workflow .github/workflows/release.yml a cada push na main.
+publish:
+  provider: github
+  owner: GustavoFCoelho
+  repo: Gordium
+  releaseType: release

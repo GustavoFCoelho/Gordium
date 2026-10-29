@@ -1,0 +1,65 @@
+name: Release
+
+# Todo push na main vira uma versão nova: o GitHub Actions compila o instalador e
+# publica uma Release. O Gordium instalado acha a Release, baixa em segundo plano
+# e mostra o botão de atualizar. Se o typecheck ou o build falharem, nada é publicado.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Número da versão
+        shell: bash
+        run: |
+          # major.minor vêm do package.json; o patch é o número desta execução.
+          BASE=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          VERSION="$BASE.${{ github.run_number }}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "Versão: $VERSION"
+
+      - name: Notas da versão (mensagens dos commits deste push)
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git log --no-merges --format='- %s' "$BEFORE..HEAD" > release-notes.md
+          else
+            git log -1 --no-merges --format='- %s' > release-notes.md
+          fi
+          cat release-notes.md
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - name: Instalador e Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish always -c.releaseInfo.releaseNotesFile=release-notes.md
