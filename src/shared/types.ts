@@ -31,6 +31,8 @@ export interface PeerInfo {
   remote: string | null
   /** Estado no canal de voz; null = fora da chamada. */
   voice: VoiceState | null
+  /** Outra identidade já tem este IP virtual: a VPN com esta pessoa fica desligada. */
+  vipConflict: boolean
 }
 
 export interface NetworkInfo {

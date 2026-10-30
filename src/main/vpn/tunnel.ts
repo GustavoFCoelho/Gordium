@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { VPN_PREFIX, VPN_SUBNET } from '../../shared/types'
 import { intToIp, SUBNET_MASK } from '../network/crypto'
+import { systemFile } from '../system'
 import { TunDevice } from './device'
 import { loadWintun } from './wintun'
 
@@ -52,14 +53,14 @@ export async function openLocalTunnel(opts: LocalTunnelOptions, handlers: Tunnel
 /** Libera ping (ICMP echo) só dentro da faixa da VPN, como o Hamachi faz. */
 async function allowPing(): Promise<void> {
   try {
-    await run('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${PING_RULE}`], { windowsHide: true })
+    await run(systemFile('netsh.exe'), ['advfirewall', 'firewall', 'show', 'rule', `name=${PING_RULE}`], { windowsHide: true })
     return
   } catch {
     // regra ainda não existe
   }
   const subnet = `${VPN_SUBNET}/${VPN_PREFIX}`
   await run(
-    'netsh',
+    systemFile('netsh.exe'),
     [
       'advfirewall', 'firewall', 'add', 'rule', `name=${PING_RULE}`, 'dir=in', 'action=allow',
       'protocol=icmpv4:8,any', `localip=${subnet}`, `remoteip=${subnet}`

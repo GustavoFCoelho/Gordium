@@ -7,6 +7,7 @@ import type { ChannelKind, NewSound, RtcSignal, ScreenChoice, ScreenSource } fro
 import { Core } from './core'
 import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
+import { windowsFile } from './system'
 import { isProcessAdmin } from './vpn/wintun'
 import { windowPlacement } from './windows'
 
@@ -26,6 +27,10 @@ if (isVpnHelper(process.argv)) runVpnHelper(process.argv)
 else startApp()
 
 function startApp(): void {
+  // Nenhuma página do app abre <webview> nem janelas novas.
+  app.on('web-contents-created', (_e, contents) => {
+    contents.on('will-attach-webview', (e) => e.preventDefault())
+  })
   if (app.isPackaged && isProcessAdmin() && relaunchUnelevated()) return
   if (profile) app.setPath('userData', join(app.getPath('appData'), `Gordium-${profile}`))
 
@@ -101,7 +106,7 @@ function relaunchUnelevated(): boolean {
     // sem marca recente: pode reabrir
   }
   writeFileSync(marker, '')
-  spawn('explorer.exe', [process.execPath], { detached: true, stdio: 'ignore' }).unref()
+  spawn(windowsFile('explorer.exe'), [process.execPath], { detached: true, stdio: 'ignore' }).unref()
   app.exit(0)
   return true
 }

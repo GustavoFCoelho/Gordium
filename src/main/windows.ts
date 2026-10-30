@@ -1,5 +1,6 @@
 import koffi from 'koffi'
 import { screen, type Display } from 'electron'
+import { systemFile } from './system'
 
 /** Onde uma janela está: em qual monitor, se o ocupa inteiro e se está minimizada. */
 export interface WindowPlacement {
@@ -20,7 +21,7 @@ let user32: { getRect(hwnd: number): Rect | null; isMinimized(hwnd: number): boo
 
 function load(): NonNullable<typeof user32> {
   if (user32) return user32
-  const lib = koffi.load('user32.dll')
+  const lib = koffi.load(systemFile('user32.dll'))
   koffi.struct('GORDIUM_RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' })
   const IsWindow = lib.func('bool __stdcall IsWindow(intptr_t hWnd)')
   const IsIconic = lib.func('bool __stdcall IsIconic(intptr_t hWnd)')

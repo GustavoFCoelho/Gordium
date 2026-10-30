@@ -1,4 +1,5 @@
 import koffi from 'koffi'
+import { systemFile } from '../system'
 
 /** Ponteiros e handles nativos chegam do koffi como BigInt (ou null). */
 type Ptr = bigint | null
@@ -40,8 +41,10 @@ export function loadWintun(dllPath: string): WintunApi {
   if (api) return api
 
   const lib = koffi.load(dllPath)
-  const k32 = koffi.load('kernel32.dll')
-  const iphlp = koffi.load('iphlpapi.dll')
+  // DLLs do sistema pelo caminho completo: sem isso o Windows procura primeiro na
+  // pasta do app, e este código roda no processo elevado da VPN.
+  const k32 = koffi.load(systemFile('kernel32.dll'))
+  const iphlp = koffi.load(systemFile('iphlpapi.dll'))
 
   koffi.struct('GORDIUM_GUID', {
     Data1: 'uint32_t',
@@ -101,7 +104,7 @@ export function loadWintun(dllPath: string): WintunApi {
 export function isProcessAdmin(): boolean {
   if (process.platform !== 'win32') return false
   try {
-    const shell32 = koffi.load('shell32.dll')
+    const shell32 = koffi.load(systemFile('shell32.dll'))
     return shell32.func('bool __stdcall IsUserAnAdmin()')()
   } catch {
     return false

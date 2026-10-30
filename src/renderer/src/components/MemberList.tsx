@@ -25,9 +25,18 @@ function Member({ peer }: { peer: PeerInfo }) {
           )}
         </div>
         <div className="member-sub">
-          <button className="ip" onClick={() => copyIp(peer.vip)} title="Copiar IP da VPN">
-            {peer.vip}
-          </button>
+          {peer.vipConflict ? (
+            <span
+              className="ip-conflict"
+              title="Outro membro tem o mesmo IP virtual. A VPN com esta pessoa fica desligada para que um não consiga se passar pelo outro."
+            >
+              IP em conflito
+            </span>
+          ) : (
+            <button className="ip" onClick={() => copyIp(peer.vip)} title="Copiar IP da VPN">
+              {peer.vip}
+            </button>
+          )}
           {peer.online ? peer.rtt !== null && <span className="rtt">{peer.rtt} ms</span> : <span>{formatAgo(peer.lastSeen)}</span>}
         </div>
       </div>

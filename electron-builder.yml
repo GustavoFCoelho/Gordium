@@ -22,6 +22,16 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+# Endurecimento do executável: o mesmo Gordium.exe roda como administrador no
+# processo da VPN, então ele não pode virar um Node.js genérico (ELECTRON_RUN_AS_NODE,
+# NODE_OPTIONS, --inspect) e só roda o código do app.asar, conferido pelo hash
+# gravado no próprio executável.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
 # O app instalado procura atualizações nas Releases deste repositório (precisa ser público).
 # A release é criada pelo workflow .github/workflows/release.yml a cada push na main.
 publish:

@@ -49,6 +49,8 @@ interface StoredIdentity {
 interface Member {
   name: string
   lastSeen: number
+  /** Quando esta identidade apareceu pela primeira vez (decide de quem é o IP virtual). */
+  firstSeen?: number
   /** Chave de transporte do membro nesta rede (hex), para reconectar direto. */
   transport?: string
 }
@@ -91,6 +93,7 @@ export class Core extends EventEmitter<CoreEvents> {
   private readonly networks = new Map<string, NetworkEntry>()
   private readonly chat: ChatStore
   private readonly records: RecordStore
+  private readonly vipCache = new Map<string, string>()
   private voice: { network: string; state: VoiceState } | null = null
   private saveTimer: NodeJS.Timeout | null = null
   private readonly settings: Settings
@@ -184,12 +187,13 @@ export class Core extends EventEmitter<CoreEvents> {
       peers.push({
         id,
         name: live?.name || member.name,
-        vip: live?.vip ?? virtualIp(Buffer.from(id, 'hex')),
+        vip: live?.vip ?? this.vipOf(id),
         online: !!live,
         lastSeen: live ? Date.now() : member.lastSeen,
         rtt: live && typeof raw?.rtt === 'number' ? raw.rtt : null,
         remote: live && raw?.remoteHost ? `${raw.remoteHost}:${raw.remotePort}` : null,
-        voice: live?.voice ?? null
+        voice: live?.voice ?? null,
+        vipConflict: this.vipConflict(id)
       })
     }
     return {
@@ -374,10 +378,9 @@ export class Core extends EventEmitter<CoreEvents> {
   private publishSigned(network: string, rec: NetRecord): void {
     const entry = this.networks.get(network)
     if (!entry) throw new Error('Rede não encontrada.')
-    if (this.records.apply(network, rec)) {
-      entry.session.broadcast({ t: 'rec', rec })
-      this.emit('changed')
-    }
+    if (!this.records.apply(network, rec)) throw new Error('A rede atingiu o limite de canais ou sons.')
+    entry.session.broadcast({ t: 'rec', rec })
+    this.emit('changed')
   }
 
   sendRtc(network: string, peer: string, signal: RtcSignal): void {
@@ -428,7 +431,8 @@ export class Core extends EventEmitter<CoreEvents> {
     session.on('peer-up', (peer) => {
       this.remember(entry, peer)
       session.rememberPeer(peer.transport)
-      this.vpn.addRoute(peer.vip, this.routeKey(net, peer), (packet) => session.sendPacket(peer.id, packet))
+      if (this.vipConflict(peer.id)) console.warn(`[vpn] ${peer.name}: IP virtual ${peer.vip} em conflito, sem rota`)
+      else this.vpn.addRoute(peer.vip, this.routeKey(net, peer), (packet) => session.sendPacket(peer.id, packet))
       session.send(peer.id, { t: 'sync-req', have: this.chat.recentIds(net) })
       session.send(peer.id, { t: 'rec-sum', items: this.records.summary(net) })
       this.emit('changed')
@@ -443,7 +447,9 @@ export class Core extends EventEmitter<CoreEvents> {
       this.emit('changed')
     })
     session.on('changed', () => this.emit('changed'))
-    session.on('packet', (peer, packet) => this.vpn.fromPeer(peer.vip, packet))
+    session.on('packet', (peer, packet) => {
+      if (!this.vipConflict(peer.id)) this.vpn.fromPeer(peer.vip, packet)
+    })
 
     session.on('chat', (_peer, raw) => this.receive(net, [raw]))
     session.on('sync-res', (_peer, raw) => {
@@ -487,8 +493,44 @@ export class Core extends EventEmitter<CoreEvents> {
     if (fresh.length > 0) this.emit('chat', network, fresh)
   }
 
+  /** IP virtual de uma identidade (fixo; guardado porque a checagem roda a cada pacote). */
+  private vipOf(id: string): string {
+    let vip = this.vipCache.get(id)
+    if (!vip) this.vipCache.set(id, (vip = virtualIp(Buffer.from(id, 'hex'))))
+    return vip
+  }
+
+  private firstSeenAnywhere(id: string): number | undefined {
+    let first: number | undefined
+    for (const e of this.networks.values()) {
+      const m = e.members.get(id)
+      // Membros gravados antes desta regra existir contam como os mais antigos.
+      if (m) first = Math.min(first ?? Infinity, m.firstSeen ?? 0)
+    }
+    return first
+  }
+
+  /**
+   * O IP virtual vem de um hash da chave, num espaço de 65 mil endereços: dá
+   * para gerar em menos de 1 s uma chave com o IP de outra pessoa. O IP fica
+   * com a identidade vista primeiro; quem aparece depois com o mesmo IP fica
+   * sem VPN conosco (empate: ninguém usa). O nosso próprio IP nunca é de outro.
+   */
+  vipConflict(id: string): boolean {
+    const vip = this.vipOf(id)
+    if (vip === this.vip) return true
+    const mine = this.firstSeenAnywhere(id) ?? Infinity
+    for (const e of this.networks.values()) {
+      for (const [other, m] of e.members) {
+        if (other !== id && (m.firstSeen ?? 0) <= mine && this.vipOf(other) === vip) return true
+      }
+    }
+    return false
+  }
+
   private remember(entry: NetworkEntry, peer: Peer): void {
-    entry.members.set(peer.id, { name: peer.name, lastSeen: Date.now(), transport: peer.transport.toString('hex') })
+    const firstSeen = entry.members.get(peer.id)?.firstSeen ?? this.firstSeenAnywhere(peer.id) ?? Date.now()
+    entry.members.set(peer.id, { name: peer.name, lastSeen: Date.now(), firstSeen, transport: peer.transport.toString('hex') })
     this.scheduleSave()
   }
 

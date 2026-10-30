@@ -111,6 +111,31 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 | `npm run test:vpn-helper` | o caminho do app: roda como usuário comum, abre o processo auxiliar pelo UAC e testa os dois sentidos do túnel pelo pipe; ao fechar, confere que o adaptador sumiu | aceitar o UAC |
 | `npm run typecheck` | tipos do processo principal, do preload e da interface | — |
 
+## Segurança
+
+Quem tem o convite é membro pleno da rede. As proteções valem contra quem não tem o convite e
+limitam o que um membro mal-intencionado consegue fazer.
+
+- **Entrada na rede.** Conexões cifradas (Noise); cada lado prova que tem a chave da rede e assina
+  o handshake com a identidade. Conexões ainda não autenticadas têm 8 s e no máximo 8 ao mesmo tempo.
+- **Autoria.** Mensagens, canais e sons são assinados por quem os criou; registros adulterados
+  são recusados.
+- **IP virtual.** Como gerar uma chave com o IP de outra pessoa leva menos de 1 s, o IP fica com a
+  identidade vista primeiro. Quem aparece depois com o mesmo IP fica sem VPN conosco ("IP em
+  conflito"). Pacotes com IP de origem que não é o do membro são descartados.
+- **Processo elevado.** Só o processo da VPN roda como administrador. Ele fala com o app por um
+  pipe com autenticação mútua (HMAC com desafio, sem o token trafegar), escolhe o próprio DLL,
+  valida IP e nome do adaptador e chama programas e DLLs do sistema pelo caminho completo.
+- **Executável.** Fuses do Electron desligam `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` e `--inspect`
+  e conferem a integridade do `app.asar` pelo hash gravado no executável.
+- **Dados da rede.** Limites de canais e sons (também para o que chega dos outros) e áudio do
+  soundboard só em WebM/Opus.
+- **Build.** O `wintun.dll` é conferido por SHA-256 e as GitHub Actions estão fixadas por commit.
+
+Ainda em aberto: o app é instalado por usuário, numa pasta em que o próprio usuário pode escrever
+(veja "Limitações"); identidade e chaves das redes ficam sem criptografia no disco; instalador e
+atualizações não têm assinatura digital.
+
 ## Limitações conhecidas
 
 - **NAT muito restritivo.** Se os dois lados estiverem atrás de NAT simétrico (alguns CGNATs e
@@ -137,5 +162,9 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 - **Áudio da tela em Windows antigo.** O som do computador é capturado sem o som do próprio
   Gordium (as vozes da chamada não voltam na transmissão), o que depende do Windows 10 versão 2004
   ou mais novo. Em versões anteriores, os outros podem ouvir eco da própria voz.
+- **Instalação por usuário.** O app fica em `%LOCALAPPDATA%\Programs\Gordium`, onde o próprio
+  usuário pode escrever, e é de lá que roda o processo elevado da VPN. Um malware rodando com a
+  conta do usuário poderia trocar esses arquivos e ganhar administrador no próximo UAC aceito. A
+  correção é instalar em `Program Files` (por máquina).
 - **Dados locais.** A identidade, as chaves das redes e o histórico ficam em `%APPDATA%\Gordium`
   sem criptografia em disco.

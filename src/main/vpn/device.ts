@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
+import { systemFile } from '../system'
 import { ERROR_HANDLE_EOF, type Guid, type WintunApi } from './wintun'
 
 const run = promisify(execFile)
@@ -69,10 +70,10 @@ export class TunDevice {
     // O Windows às vezes demora alguns instantes para expor a interface recém-criada.
     for (let attempt = 0; attempt < 10; attempt++) {
       try {
-        await run('netsh', ['interface', 'ipv4', 'set', 'address', `name=${iface}`, 'source=static', `address=${ip}`, `mask=${mask}`, 'gateway=none'], {
+        await run(systemFile('netsh.exe'), ['interface', 'ipv4', 'set', 'address', `name=${iface}`, 'source=static', `address=${ip}`, `mask=${mask}`, 'gateway=none'], {
           windowsHide: true
         })
-        await run('netsh', ['interface', 'ipv4', 'set', 'subinterface', iface, `mtu=${TUN_MTU}`, 'store=active'], { windowsHide: true })
+        await run(systemFile('netsh.exe'), ['interface', 'ipv4', 'set', 'subinterface', iface, `mtu=${TUN_MTU}`, 'store=active'], { windowsHide: true })
         return
       } catch (err) {
         lastErr = err

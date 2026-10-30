@@ -43,7 +43,18 @@ export const MAX_SOUND_SECONDS = 6
 /** ~210 KB de áudio: cabe folgado num frame da rede (512 KB). */
 export const MAX_SOUND_BASE64 = 280_000
 export const MAX_SOUNDS = 64
-const SOUND_MIMES = new Set(['audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/wav'])
+/**
+ * Teto de registros guardados por tipo, contando exclusões: vale também para o que
+ * chega dos outros, para um membro mal-intencionado não encher o disco de ninguém.
+ */
+const MAX_RECORDS_PER_KIND = 500
+/**
+ * Só o formato que o próprio app gera (WebM/Opus), conferindo a assinatura EBML do
+ * arquivo ("GkXfo" em base64): o áudio de outro membro não chega aos demais
+ * decodificadores do Chromium.
+ */
+const SOUND_MIME = 'audio/webm'
+const WEBM_MAGIC_BASE64 = 'GkXfo'
 /** Revisões no futuro travariam o registro para todos; tolera relógios um pouco adiantados. */
 const MAX_CLOCK_SKEW_MS = 10 * 60_000
 
@@ -85,8 +96,9 @@ function validSound(d: Record<string, unknown>): SoundData | null {
   if (!name || name !== d.name || name.length > 24) return null
   if (typeof d.emoji !== 'string' || d.emoji.length > 16 || /[\u0000-\u001f]/.test(d.emoji)) return null
   if (typeof d.duration !== 'number' || !(d.duration > 0) || d.duration > MAX_SOUND_SECONDS + 0.5) return null
-  if (typeof d.mime !== 'string' || !SOUND_MIMES.has(d.mime)) return null
+  if (d.mime !== SOUND_MIME) return null
   if (typeof d.audio !== 'string' || d.audio.length > MAX_SOUND_BASE64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(d.audio)) return null
+  if (!d.audio.startsWith(WEBM_MAGIC_BASE64)) return null
   if (typeof d.createdAt !== 'number' || !Number.isFinite(d.createdAt)) return null
   return { name, emoji: d.emoji, duration: d.duration, mime: d.mime, audio: d.audio, createdAt: d.createdAt }
 }
@@ -161,10 +173,24 @@ export class RecordStore {
   /** Guarda o registro se ele for mais novo que o atual. Devolve se mudou algo. */
   apply(network: string, rec: NetRecord): boolean {
     const map = this.map(network)
-    if (!isNewer(rec, map.get(keyOf(rec)))) return false
+    const current = map.get(keyOf(rec))
+    if (!isNewer(rec, current)) return false
+    if (!current && !this.hasRoom(map, rec)) return false
     map.set(keyOf(rec), rec)
     this.scheduleSave(network)
     return true
+  }
+
+  private hasRoom(map: Map<string, NetRecord>, rec: NetRecord): boolean {
+    let total = 0
+    let liveSounds = 0
+    for (const r of map.values()) {
+      if (r.kind !== rec.kind) continue
+      total++
+      if (r.kind === 'sound' && r.data) liveSounds++
+    }
+    if (total >= MAX_RECORDS_PER_KIND) return false
+    return !(rec.kind === 'sound' && rec.data && liveSounds >= MAX_SOUNDS)
   }
 
   /** Resumo [chave, rev] para comparar com outro membro. */

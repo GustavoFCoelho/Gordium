@@ -843,6 +843,11 @@ a {
   text-decoration: underline;
 }
 
+.ip-conflict {
+  color: #f23f43;
+  font-weight: 600;
+}
+
 .rtt {
   color: var(--green);
 }

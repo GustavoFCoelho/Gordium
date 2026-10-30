@@ -13,7 +13,12 @@ const PROTOCOL_VERSION = 1
  */
 const LOOKUP_SCHEDULE_MS = [4_000, 10_000, 20_000, 40_000]
 const LOOKUP_INTERVAL_MS = 5 * 60_000
-const AUTH_TIMEOUT_MS = 15_000
+/**
+ * Quem acha o nosso endereço na DHT consegue abrir conexões mesmo sem a chave da
+ * rede; elas só ocupam vaga até a autenticação. Pouco tempo e poucas ao mesmo tempo.
+ */
+const AUTH_TIMEOUT_MS = 8_000
+const MAX_PENDING_AUTH = 8
 const MAX_FRAME_BYTES = 512 * 1024
 
 /** Primeiro byte de um pacote IP encapsulado (datagrama ou frame binário). */
@@ -45,6 +50,8 @@ export interface Peer {
   voice: VoiceState | null
   conn: SwarmConnection
   authed: boolean
+  /** Libera a vaga de conexão pendente de autenticação. */
+  settle?: () => void
 }
 
 export interface LocalProfile {
@@ -106,6 +113,7 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
   private lookupTimer: NodeJS.Timeout | null = null
   private lookups = 0
   private readonly peers = new Map<string, Peer>()
+  private pendingAuth = 0
 
   constructor(
     secret: NetworkSecret,
@@ -201,6 +209,17 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
   }
 
   private onConnection(conn: SwarmConnection): void {
+    if (this.pendingAuth >= MAX_PENDING_AUTH) {
+      conn.on('error', () => {})
+      conn.destroy()
+      return
+    }
+    this.pendingAuth++
+    let pending = true
+    const settle = (): void => {
+      if (pending) this.pendingAuth--
+      pending = false
+    }
     const peer: Peer = {
       id: '',
       transport: conn.remotePublicKey,
@@ -213,6 +232,7 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
     const timer = setTimeout(() => {
       if (!peer.authed) conn.destroy()
     }, AUTH_TIMEOUT_MS)
+    peer.settle = settle
 
     conn.on('error', () => {})
     conn.on('data', (data: Buffer) => this.onData(peer, data))
@@ -221,6 +241,7 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
     })
     conn.on('close', () => {
       clearTimeout(timer)
+      settle()
       if (peer.authed && this.peers.get(peer.id) === peer) {
         this.peers.delete(peer.id)
         this.emit('peer-down', peer)
@@ -278,6 +299,7 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
         return
       }
       peer.authed = true
+      peer.settle?.()
       peer.name = cleanName(frame.name) || 'Sem nome'
       peer.voice = cleanVoice(frame.voice)
       const previous = this.peers.get(peer.id)

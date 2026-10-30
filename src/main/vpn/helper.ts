@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { connect, createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { inSubnet, ipToInt } from '../network/crypto'
+import { systemFile } from '../system'
 import { openLocalTunnel, type Tunnel, type TunnelHandlers } from './tunnel'
 
 /*
@@ -14,8 +15,11 @@ import { openLocalTunnel, type Tunnel, type TunnelHandlers } from './tunnel'
  *
  *   app (usuário comum) ──named pipe── Gordium.exe --vpn-helper (administrador)
  *
- * O app cria o pipe com nome aleatório e abre o auxiliar pelo UAC; o auxiliar
- * se conecta e prova com um token que foi aberto pelo app. Pelo pipe passam
+ * O app cria o pipe com nome aleatório e abre o auxiliar pelo UAC, passando um
+ * token. Os dois lados provam que conhecem o token por desafio e resposta (HMAC
+ * sobre números aleatórios), sem o token passar pelo pipe: outro programa não
+ * consegue se passar pelo app (criando outra instância do pipe) nem pelo
+ * auxiliar. Só depois disso o auxiliar aceita comandos. Pelo pipe passam
  * comandos (JSON) e os pacotes IP do adaptador. Se o pipe cair (app fechado),
  * o auxiliar remove o adaptador e sai.
  */
@@ -32,7 +36,12 @@ const PIPE_RE = /^\\\\\.\\pipe\\gordium-vpn-[0-9a-f]{32}$/
 const ADAPTER_RE = /^Gordium(-[A-Za-z0-9_-]{1,32})?$/
 
 type Message =
-  | { t: 'hello'; token: string }
+  /** auxiliar → app: desafio */
+  | { t: 'hello'; nonce: string }
+  /** app → auxiliar: resposta ao desafio + desafio de volta */
+  | { t: 'challenge'; proof: string; nonce: string }
+  /** auxiliar → app: resposta */
+  | { t: 'auth'; proof: string }
   | { t: 'start'; ip: string; adapterName: string }
   | { t: 'ready' }
   | { t: 'error'; message: string }
@@ -91,6 +100,18 @@ function wintunPath(): string {
     : join(app.getAppPath(), 'resources', 'wintun', process.arch, 'wintun.dll')
 }
 
+const nonce = (): string => randomBytes(32).toString('hex')
+
+/** Prova de que conhece o token, ligada a um desafio e a um papel (app ou auxiliar). */
+function proofOf(token: string, role: 'app' | 'helper', challenge: string): string {
+  return createHmac('sha256', token).update(`gordium-vpn-pipe/${role}`).update(challenge).digest('hex')
+}
+
+function checkProof(token: string, role: 'app' | 'helper', challenge: string, proof: unknown): boolean {
+  if (typeof proof !== 'string' || !/^[0-9a-f]{64}$/.test(proof)) return false
+  return timingSafeEqual(Buffer.from(proofOf(token, role, challenge), 'hex'), Buffer.from(proof, 'hex'))
+}
+
 function validIp(ip: unknown): ip is string {
   if (typeof ip !== 'string' || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false
   return ip.split('.').every((o) => Number(o) <= 255) && inSubnet(ipToInt(ip))
@@ -105,7 +126,8 @@ function launchElevated(args: string[]): Promise<void> {
   const argList = args.map((a) => quote(`"${a}"`)).join(',')
   const command = `Start-Process -FilePath ${quote(process.execPath)} -ArgumentList ${argList} -Verb RunAs -WindowStyle Hidden`
   return new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true }, (err) => {
+    const powershell = systemFile('WindowsPowerShell\\v1.0\\powershell.exe')
+    execFile(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true }, (err) => {
       if (err) reject(new Error('A permissão de administrador foi negada. A VPN precisa dela para criar o adaptador de rede.'))
       else resolve()
     })
@@ -113,7 +135,6 @@ function launchElevated(args: string[]): Promise<void> {
 }
 
 function waitForHelper(server: Server, token: string, launched: Promise<void>): Promise<Channel> {
-  const expected = Buffer.from(token)
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('O processo da VPN não respondeu.')), HELPER_TIMEOUT_MS)
     launched.catch((err) => {
@@ -123,12 +144,17 @@ function waitForHelper(server: Server, token: string, launched: Promise<void>): 
     server.on('connection', (sock) => {
       const ch = new Channel(sock)
       const kick = setTimeout(() => sock.destroy(), 10_000)
+      const ours = nonce()
       ch.onJson = (msg) => {
-        clearTimeout(kick)
-        const got = Buffer.from(msg.t === 'hello' && typeof msg.token === 'string' ? msg.token : '')
-        if (got.length !== expected.length || !timingSafeEqual(got, expected)) return sock.destroy()
-        clearTimeout(timer)
-        resolve(ch)
+        if (msg.t === 'hello' && typeof msg.nonce === 'string' && /^[0-9a-f]{64}$/.test(msg.nonce)) {
+          ch.json({ t: 'challenge', proof: proofOf(token, 'app', msg.nonce), nonce: ours })
+        } else if (msg.t === 'auth' && checkProof(token, 'helper', ours, msg.proof)) {
+          clearTimeout(kick)
+          clearTimeout(timer)
+          resolve(ch)
+        } else {
+          sock.destroy()
+        }
       }
     })
   })
@@ -222,10 +248,22 @@ export function runVpnHelper(argv: string[]): void {
 
   const sock = connect(pipe)
   const ch = new Channel(sock)
-  sock.on('connect', () => ch.json({ t: 'hello', token }))
+  const ours = nonce()
+  let trusted = false
+  sock.on('connect', () => ch.json({ t: 'hello', nonce: ours }))
   sock.on('close', () => void exit())
-  ch.onPacket = (packet) => tunnel?.write(packet)
+  // Nada do que chega é usado antes de o outro lado provar que é o app.
+  ch.onPacket = (packet) => {
+    if (trusted) tunnel?.write(packet)
+  }
   ch.onJson = (msg) => {
+    if (!trusted) {
+      const ok = msg.t === 'challenge' && checkProof(token, 'app', ours, msg.proof) && typeof msg.nonce === 'string' && /^[0-9a-f]{64}$/.test(msg.nonce)
+      if (!ok) return void exit()
+      trusted = true
+      ch.json({ t: 'auth', proof: proofOf(token, 'helper', msg.nonce) })
+      return
+    }
     if (msg.t === 'stop') return void exit()
     if (msg.t !== 'start' || tunnel || exiting) return
     if (!validIp(msg.ip) || typeof msg.adapterName !== 'string' || !ADAPTER_RE.test(msg.adapterName)) {

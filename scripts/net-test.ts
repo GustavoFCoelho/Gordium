@@ -3,11 +3,14 @@
 // WebRTC e pacotes da VPN; depois testa duas redes ao mesmo tempo e reconexão.
 // Precisa de internet. Uso: npm run test:net
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import * as hcrypto from 'hypercore-crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifyMessage } from '../src/main/chat'
 import { Core } from '../src/main/core'
+import { ipToInt, virtualIp } from '../src/main/network/crypto'
 
 const dirs: string[] = []
 // O teste de rede não liga a VPN (isso é o test:vpn, como administrador).
@@ -79,7 +82,8 @@ async function main() {
   a.deleteChannel(net, duelo)
   await until('excluir canal propaga', () => !b.channels(net).some((ch) => ch.id === duelo))
 
-  const fakeAudio = Buffer.alloc(3000, 1).toString('base64')
+  // cabeçalho EBML (WebM) + dados quaisquer: o conteúdo não é decodificado no processo principal
+  const fakeAudio = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(3000, 1)]).toString('base64')
   const som = a.addSound(net, { name: 'Buzina', emoji: '📢', duration: 1.2, mime: 'audio/webm', audio: fakeAudio })
   await until('som do soundboard chega em B', () => b.sounds(net).some((x) => x.id === som) && b.soundAudio(net, som)?.audio === fakeAudio)
   let sfx: unknown[] = []
@@ -100,6 +104,14 @@ async function main() {
   }
   if (!rejected) throw new Error('aceitou som grande demais')
   console.log('  ok: som acima do limite recusado')
+  rejected = false
+  try {
+    a.addSound(net, { name: 'MP3', emoji: '', duration: 1, mime: 'audio/mpeg', audio: Buffer.from('ID3....').toString('base64') })
+  } catch {
+    rejected = true
+  }
+  if (!rejected) throw new Error('aceitou áudio fora do formato WebM')
+  console.log('  ok: áudio fora do formato WebM recusado')
 
   let sig: unknown = null
   b.on('rtc', (_n, peer, s) => { if (peer === a.selfId) sig = s })
@@ -137,6 +149,25 @@ async function main() {
   b.setName('Bruno Renomeado')
   await until('renomear propaga', () => a.state().networks[0].peers.some((p) => p.name === 'Bruno Renomeado'))
 
+  // Impostor: gera uma identidade com o MESMO IP virtual do B (leva menos de 1 s)
+  let seed = randomBytes(32)
+  while (virtualIp(hcrypto.keyPair(seed).publicKey) !== b.vip) seed = randomBytes(32)
+  const dirD = mkdtempSync(join(tmpdir(), 'gordium-d-'))
+  dirs.push(dirD)
+  writeFileSync(join(dirD, 'identity.json'), JSON.stringify({ seed: seed.toString('hex'), name: 'Impostor' }))
+  const d = new Core(dirD, noVpn)
+  d.init()
+  if (d.vip !== b.vip) throw new Error('não gerou a colisão')
+  d.joinNetwork(invite)
+  await until('A vê o impostor online', () => online(a, d.selfId))
+  const seenD = a.state().networks[0].peers.find((p) => p.id === d.selfId)!
+  const seenB = a.state().networks[0].peers.find((p) => p.id === b.selfId)!
+  if (!seenD.vipConflict || seenB.vipConflict) throw new Error('conflito de IP não detectado do jeito certo')
+  const routes: Map<string, unknown> | undefined = (a as any).vpn.routes.get(ipToInt(b.vip))
+  if (!routes || [...routes.keys()].some((k) => k.endsWith(d.selfId))) throw new Error('o impostor ganhou rota para o IP do B')
+  console.log(`  ok: impostor com o IP ${d.vip} do B fica sem VPN; o IP continua do B`)
+  await d.shutdown()
+
   // A participa de uma segunda rede, só com C: as duas precisam funcionar juntas
   const net2 = a.createNetwork('Segunda rede')
   const invite2 = a.state().networks.find((n) => n.id === net2)!.invite
@@ -156,6 +187,8 @@ async function main() {
   const b2 = new Core(dirB, noVpn)
   b2.init()
   await until('B reconecta após reiniciar', () => online(a, b2.selfId) && online(b2, a.selfId), 90000)
+  if (a.state().networks[0].peers.find((p) => p.id === b2.selfId)?.vipConflict) throw new Error('B perdeu o próprio IP para o impostor')
+  console.log('  ok: B continua dono do IP depois de reiniciar')
 
   await Promise.all([a.shutdown(), b2.shutdown(), c.shutdown()])
   console.log('TUDO OK')
