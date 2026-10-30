@@ -153,3 +153,4 @@ export const TrashIcon = icon(
 )
 export const PencilIcon = icon(<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />)
 export const PlayIcon = icon(<path d="m6 3 14 9-14 9z" />)
+export const StopIcon = icon(<rect x="5" y="5" width="14" height="14" rx="2" />)

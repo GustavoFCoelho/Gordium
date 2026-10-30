@@ -127,24 +127,13 @@ export interface ScreenSource {
 export interface ScreenChoice {
   surface: 'screen' | 'window'
   name: string
-  /**
-   * Captura própria de janela: o app captura o monitor em que ela está e recorta
-   * só a janela, seguindo a posição dela (ver WindowTrack).
-   */
-  crop: boolean
+  /** Janela: o processo principal avisa quando ela minimiza ou fecha (ver WindowTrack). */
+  follow: boolean
 }
 
-/** Onde está a janela transmitida, em pixels físicos do monitor capturado. */
+/** Estado da janela transmitida. */
 export interface WindowTrack {
   state: 'visible' | 'minimized' | 'gone'
-  x: number
-  y: number
-  width: number
-  height: number
-  monitorWidth: number
-  monitorHeight: number
-  /** Partes da janela cobertas por outras janelas (relativas à janela): saem pretas. */
-  covered: { x: number; y: number; width: number; height: number }[]
 }
 
 /** unsupported = rodando fora do instalador (modo de desenvolvimento). */

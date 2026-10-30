@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AppState, ChannelInfo, ChannelKind, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
 import { call, SCREEN_QUALITIES, useCall } from '../rtc/call'
-import { MAX_SOUND_SECONDS, prepareSound } from '../rtc/soundboard'
+import { decodeAudioFile, encodeSound, MAX_SOUND_SECONDS, suggestSegment, type Segment } from '../rtc/soundboard'
 import { toast, useUpdate } from '../store'
 import { copyText, errorText, formatBytes } from '../util'
+import { AudioTrimmer } from './AudioTrimmer'
 import { CloseIcon, CopyIcon, HashIcon, ShieldIcon, VolumeIcon } from './Icons'
 
 const api = window.gordium
@@ -224,24 +225,37 @@ export function ChannelModal({
 const QUICK_EMOJIS = ['🔊', '😂', '👏', '🎉', '💀', '🔥', '😱', '🤡', '🐐', '💥', '🥁', '📢']
 
 export function AddSoundModal({ network, onClose }: { network: NetworkInfo; onClose(): void }) {
-  const [file, setFile] = useState<File | null>(null)
+  const [audio, setAudio] = useState<{ file: File; buffer: AudioBuffer } | null>(null)
+  const [segment, setSegment] = useState<Segment>([0, 0])
+  const [reading, setReading] = useState(false)
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('🔊')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const pick = (f: File | null) => {
-    setFile(f)
+  const pick = async (file: File | null) => {
     setError(null)
-    if (f && !name) setName(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 24))
+    setAudio(null)
+    if (!file) return
+    if (!name) setName(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 24))
+    setReading(true)
+    try {
+      const buffer = await decodeAudioFile(file)
+      setSegment(suggestSegment(buffer))
+      setAudio({ file, buffer })
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setReading(false)
+    }
   }
 
   const submit = async () => {
-    if (!file) return
+    if (!audio) return
     setBusy(true)
     setError(null)
     try {
-      const sound = await prepareSound(file, name.trim().slice(0, 24), emoji.trim())
+      const sound = await encodeSound(audio.buffer, segment[0], segment[1], name.trim().slice(0, 24), emoji.trim())
       await api.addSound(network.id, sound)
       toast(`Som "${sound.name}" adicionado ao soundboard`)
       onClose()
@@ -252,10 +266,10 @@ export function AddSoundModal({ network, onClose }: { network: NetworkInfo; onCl
   }
 
   return (
-    <Modal title="Adicionar som" onClose={onClose}>
+    <Modal title="Adicionar som" onClose={onClose} wide={!!audio}>
       <p className="hint">
-        O som fica disponível para todos da rede <b>{network.name}</b>. Até {MAX_SOUND_SECONDS} s: arquivos mais longos são
-        cortados. MP3, WAV, OGG e outros formatos comuns.
+        O som fica disponível para todos da rede <b>{network.name}</b>. Escolha um arquivo (MP3, WAV, OGG e outros formatos
+        comuns) e o trecho que vai tocar, de até {MAX_SOUND_SECONDS} s.
       </p>
       <form
         onSubmit={(e) => {
@@ -265,8 +279,15 @@ export function AddSoundModal({ network, onClose }: { network: NetworkInfo; onCl
       >
         <label>
           Arquivo de áudio
-          <input type="file" accept="audio/*" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+          <input type="file" accept="audio/*" disabled={busy} onChange={(e) => void pick(e.target.files?.[0] ?? null)} />
         </label>
+        {reading && <p className="hint">Lendo o áudio…</p>}
+        {audio && (
+          <div className="trimmer-field">
+            <span className="field-label">Trecho</span>
+            <AudioTrimmer key={audio.file.name + audio.file.lastModified} buffer={audio.buffer} segment={segment} onChange={setSegment} />
+          </div>
+        )}
         <label>
           Nome
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do som" maxLength={24} />
@@ -287,7 +308,7 @@ export function AddSoundModal({ network, onClose }: { network: NetworkInfo; onCl
           <button type="button" className="button secondary" onClick={onClose}>
             Cancelar
           </button>
-          <button type="submit" className="button" disabled={busy || !file || !name.trim()}>
+          <button type="submit" className="button" disabled={busy || !audio || !name.trim()}>
             {busy ? 'Preparando o som…' : 'Adicionar'}
           </button>
         </div>
@@ -621,8 +642,9 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
       </div>
       {kind === 'window' && !notice && (
         <p className="hint small">
-          Só a janela escolhida é transmitida, mesmo quando ela perde o foco. O que ficar por cima dela aparece preto para quem
-          assiste, e se ela for minimizada a transmissão pausa. Janelas minimizadas não aparecem nesta lista.
+          Só a janela escolhida é transmitida, mesmo com outros apps por cima dela. Se ela for minimizada, quem assiste vê a
+          última imagem até você abri-la de novo (o Windows não desenha janelas minimizadas). Janelas minimizadas não aparecem
+          nesta lista.
         </p>
       )}
       {notice && <div className="picker-notice">{notice}</div>}

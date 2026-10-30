@@ -119,21 +119,30 @@ const hasText = (selector, text) => `[...document.querySelectorAll(${JSON.string
 const rightClick = (selector, text) =>
   `(() => { const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => ${text ? `e.textContent.includes(${JSON.stringify(text)})` : 'true'}); if (!el) throw new Error('não achei ' + ${JSON.stringify(`${selector} ${text ?? ''}`)}); const r = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 10, clientY: r.bottom - 5 })); return true })()`
 
-/** Escuta os sons do soundboard tocados (duração de cada um, em segundos). */
+/** Escuta os sons do soundboard tocados: duração (s) e frequência (Hz, pelos cruzamentos de zero no meio do som). */
 const listenSoundboard = `(() => {
   window.__sfx = []
   const start = AudioBufferSourceNode.prototype.start
   AudioBufferSourceNode.prototype.start = function (...args) {
-    window.__sfx.push(this.buffer?.duration ?? 0)
+    const b = this.buffer
+    let hz = 0
+    if (b) {
+      const data = b.getChannelData(0)
+      const a = Math.floor(data.length * 0.25), z = Math.floor(data.length * 0.75)
+      let crossings = 0
+      for (let i = a + 1; i < z; i++) if ((data[i - 1] < 0) !== (data[i] < 0)) crossings++
+      hz = crossings / 2 / ((z - a) / b.sampleRate)
+    }
+    window.__sfx.push({ d: b?.duration ?? 0, hz })
     return start.apply(this, args)
   }
   return true
 })()`
 
-/** WAV de 1 s (lá 440 Hz) para adicionar ao soundboard pela interface. */
+/** WAV de 10 s para o soundboard: lá 440 Hz nos primeiros 5 s e lá 880 Hz nos últimos 5 s. */
 function writeBeep(path) {
   const rate = 48000
-  const n = rate
+  const n = rate * 10
   const buf = Buffer.alloc(44 + n * 2)
   buf.write('RIFF', 0)
   buf.writeUInt32LE(36 + n * 2, 4)
@@ -147,7 +156,10 @@ function writeBeep(path) {
   buf.writeUInt16LE(16, 34)
   buf.write('data', 36)
   buf.writeUInt32LE(n * 2, 40)
-  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 12000), 44 + i * 2)
+  for (let i = 0; i < n; i++) {
+    const hz = i < rate * 5 ? 440 : 880
+    buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / rate) * 12000), 44 + i * 2)
+  }
   writeFileSync(path, buf)
 }
 const BEEP = join(SHOTS, 'buzina.wav')
@@ -232,14 +244,20 @@ try {
   await A.evaluate(click('.sound.add'))
   await A.until('modal de som aberto', `!!document.querySelector('.modal input[type=file]')`)
   await A.setFile('.modal input[type=file]', BEEP)
+  await A.until('arquivo lido e trecho sugerido (0 a 6 s)', `document.querySelector('.trimmer-length')?.textContent.startsWith('6,00 s')`, 10000)
+  // só o pedaço de 6 a 8 s (o tom de 880 Hz) deve virar o som
+  await A.evaluate(fill('.trimmer-time:nth-of-type(1) input', '6', true))
+  await A.evaluate(fill('.trimmer-time:nth-of-type(2) input', '8', true))
+  await A.until('trecho de 6 a 8 s escolhido', `document.querySelector('.trimmer-length')?.textContent.startsWith('2,00 s')`, 5000)
   await A.evaluate(fill('.modal input[placeholder="Nome do som"]', 'Buzina'))
+  await A.shot('03b-trecho-do-som')
   await A.evaluate(click('.modal .button', 'Adicionar'))
   await A.until('som preparado e no soundboard', `!document.querySelector('.modal') && ${hasText('.soundboard .sound', 'Buzina')}`, 20000)
   await B.until('o som chega no soundboard do Bruno', `window.gordium.getState().then(s => s.networks[0].sounds.some(x => x.name === 'Buzina'))`)
   await A.shot('04a-soundboard')
   await A.evaluate(click('.soundboard .sound', 'Buzina'))
-  await B.until('Bruno ouve o som do soundboard', `window.__sfx.some(d => d > 0.9 && d < 1.6)`, 10000)
-  log('  duração do som tocado no Bruno:', await B.evaluate(`window.__sfx.map(d => d.toFixed(2) + ' s').join(', ')`))
+  await B.until('Bruno ouve só o trecho escolhido (2 s de 880 Hz)', `window.__sfx.some(x => x.d > 1.9 && x.d < 2.6 && Math.abs(x.hz - 880) < 30)`, 10000)
+  log('  som tocado no Bruno:', await B.evaluate(`window.__sfx.map(x => x.d.toFixed(2) + ' s, ' + Math.round(x.hz) + ' Hz').join(' | ')`))
   await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
 
   await A.evaluate(click('.call-controls .round-button[title="Câmera"]'))

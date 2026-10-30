@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
 import { toast } from '../store'
 import { playSoundboard } from './soundboard'
-import { canCropWindows, cropWindow, followWindow } from './windowCapture'
+import { canProcessVideo, followWindow, windowCapture } from './windowCapture'
 import { playCue, type Cue } from './sounds'
 
 const api = window.gordium
@@ -354,18 +354,14 @@ class CallManager {
 
   async startScreen(sourceId: string, audio: boolean, quality: ScreenQuality): Promise<ScreenChoice | null> {
     if (!this.network) return null
-    // Começa a ouvir a posição da janela antes de pedir a captura, para não perder a primeira.
-    const follow = canCropWindows ? followWindow() : null
+    // Começa a ouvir o estado da janela antes de pedir a captura, para não perder o primeiro.
+    const follow = canProcessVideo ? followWindow() : null
     let choice: ScreenChoice
     let stream: MediaStream
     try {
-      choice = await api.selectScreenSource(sourceId, audio, canCropWindows)
+      choice = await api.selectScreenSource(sourceId, audio)
       stream = await navigator.mediaDevices.getDisplayMedia({
-        // Recorte de janela: o monitor vem na resolução nativa e só a janela é reduzida
-        // depois, o que deixa o recorte mais nítido.
-        video: choice.crop
-          ? { frameRate: { max: quality.fps } }
-          : { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
+        video: { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
         // O som do computador vai como é: os filtros de voz (eco, ruído, ganho
         // automático) vêm ligados por padrão e estragam música e som de jogo.
         audio: audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
@@ -379,8 +375,8 @@ class CallManager {
     this.local.screenAudio?.stop()
     const raw = stream.getVideoTracks()[0]
     let video = raw
-    if (choice.crop && follow) {
-      const capture = cropWindow(raw, follow, quality.width, quality.height, () => {
+    if (choice.follow && follow) {
+      const capture = windowCapture(raw, follow, () => {
         toast('A janela transmitida foi fechada.', 'error')
         void this.stopScreen()
       })

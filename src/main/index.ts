@@ -9,7 +9,7 @@ import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
 import { windowsFile } from './system'
 import { isProcessAdmin } from './vpn/wintun'
-import { physicalBounds, windowPlacement, windowTrack } from './windows'
+import { windowPlacement, windowTrack } from './windows'
 
 // GORDIUM_PROFILE=b permite rodar uma segunda instância (outro usuário) na mesma máquina.
 const profile = (process.env.GORDIUM_PROFILE ?? '').replace(/[^a-z0-9_-]/gi, '')
@@ -183,13 +183,13 @@ function setupMedia(): void {
 
 let tracking: NodeJS.Timeout | null = null
 
-/** Manda à interface onde está a janela transmitida (10x por segundo, só quando muda). */
-function startWindowTracking(sourceId: string, monitor: { x: number; y: number; width: number; height: number }): void {
+/** Avisa a interface quando a janela transmitida minimiza, volta ou fecha (checa 5x por segundo). */
+function startWindowTracking(sourceId: string): void {
   let last = ''
   const tick = (): void => {
     let track: WindowTrack
     try {
-      track = windowTrack(sourceId, monitor)
+      track = windowTrack(sourceId)
     } catch {
       return
     }
@@ -199,7 +199,7 @@ function startWindowTracking(sourceId: string, monitor: { x: number; y: number; 
     send('screen:window', track)
   }
   tick()
-  tracking = setInterval(tick, 100)
+  tracking = setInterval(tick, 200)
 }
 
 function stopWindowTracking(): void {
@@ -245,25 +245,19 @@ function setupIpc(): void {
       }
     })
   })
-  ipcMain.handle('screen:select', (_e, id: string, audio: boolean, crop: boolean): ScreenChoice => {
+  ipcMain.handle('screen:select', (_e, id: string, audio: boolean): ScreenChoice => {
     const source = screenSources.get(id)
     if (!source) throw new Error('Essa tela ou janela não está mais disponível.')
     stopWindowTracking()
-    if (source.id.startsWith('window:') && crop) {
-      // Captura própria de janela: captura o monitor em que ela está (o método mais
-      // confiável no Windows: não falha sem foco nem desenha borda amarela) e a
-      // interface recorta só a janela, seguindo a posição que mandamos daqui.
-      const place = windowPlacement(source.id)
-      if (!place?.display || place.minimized) throw new Error('A janela está minimizada. Abra-a antes de transmitir.')
-      const displayId = String(place.display.id)
-      const monitor = [...screenSources.values()].find((s) => s.display_id === displayId)
-      if (!monitor) throw new Error('Não encontrei o monitor dessa janela.')
-      pendingCapture = { source: monitor, audio: !!audio }
-      startWindowTracking(source.id, physicalBounds(place.display))
-      return { surface: 'window', name: source.name, crop: true }
-    }
     pendingCapture = { source, audio: !!audio }
-    return { surface: source.id.startsWith('screen:') ? 'screen' : 'window', name: source.name, crop: false }
+    // Janela: captura a própria janela (o conteúdo dela aparece mesmo com outros apps
+    // por cima) e acompanhamos se ela minimiza ou fecha, para avisar quem assiste.
+    const isWindow = source.id.startsWith('window:')
+    if (isWindow) {
+      if (windowPlacement(source.id)?.minimized) throw new Error('A janela está minimizada. Abra-a antes de transmitir.')
+      startWindowTracking(source.id)
+    }
+    return { surface: isWindow ? 'window' : 'screen', name: source.name, follow: isWindow }
   })
   ipcMain.handle('screen:stop-tracking', () => stopWindowTracking())
 

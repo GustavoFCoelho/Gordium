@@ -7,7 +7,8 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   "+" ao lado de cada categoria). Cada canal de voz é uma sala separada.
 - **Sala de voz**: mute, ensurdecer, indicador de quem está falando, volume por pessoa e sons de
   entrada/saída.
-- **Soundboard**: sons de até 6 s que qualquer membro adiciona e toca para todos da sala.
+- **Soundboard**: sons de até 6 s que qualquer membro adiciona e toca para todos da sala. Ao adicionar,
+  dá para escolher o trecho do arquivo (até de uma música inteira) na forma de onda e ouvir antes.
 - **Câmera e compartilhamento de tela**: tela inteira ou uma janela, de 720p30 a 1080p60, com
   áudio do computador opcional.
 - **Chat de texto**: mensagens assinadas por quem escreveu, histórico salvo em cada membro e
@@ -54,12 +55,11 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   registro assinado por quem fez; os membros trocam os registros ao se conectar e repassam os
   novos na hora, e em conflito vale a alteração mais recente. Os sons são comprimidos em Opus
   (até 6 s, ~70 KB) e cada um toca a própria cópia: tocar um som só manda um aviso pela rede.
-- **Captura própria de janela.** O Chromium captura janelas de outros programas de forma frágil
-  (falha sem foco, coberta ou minimizada) ou com a borda amarela do Windows 10. O Gordium captura
-  o monitor em que a janela está (DXGI, o método confiável) e recorta cada quadro só na área dela,
-  seguindo pela API do Windows a posição, o tamanho e as janelas por cima (que saem pretas, para
-  não vazar nada; overlays transparentes como o do NVIDIA são ignorados). Medido no Master Duel:
-  1080p a 57 fps.
+- **Transmissão de janela.** A janela é capturada pelo método GDI do Chromium, que mostra o
+  conteúdo dela mesmo com outros apps por cima e não desenha a borda amarela do Windows 10 (o
+  método moderno, WGC, desenha). O app acompanha pela API do Windows se a janela minimiza ou
+  fecha: minimizada, os quadros passam por um processamento próprio que mantém a última imagem
+  com um aviso para quem assiste.
 - **Mídia.** WebRTC em malha (cada participante se conecta aos outros), com sinalização pelo
   próprio canal P2P. Cada par de participantes tem 4 trilhas fixas (microfone, câmera, tela e
   áudio da tela): ligar a câmera ou a tela é só um `replaceTrack`, sem renegociar. Com a VPN
@@ -157,11 +157,11 @@ atualizações não têm assinatura digital.
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping
   dentro de `100.88.0.0/16`. Jogos e servidores precisam ser permitidos no firewall (o Windows
   costuma perguntar na primeira vez).
-- **Transmitir uma janela: o que fica por cima dela sai preto.** A captura de janela é própria
-  (veja "Como funciona"); se outra janela passar por cima da transmitida, aquela área aparece
-  preta para quem assiste, e janela minimizada pausa a transmissão. Janelas minimizadas não
-  aparecem na lista para escolher. Uma janela arrastada para outro monitor no meio da
-  transmissão sai do recorte: pare e transmita de novo.
+- **Janela minimizada não é transmitida ao vivo.** O Windows para de desenhar janelas
+  minimizadas, então nenhum método de captura recebe imagem nova delas (a "captura de jogo" do
+  OBS consegue injetando código no jogo, o que um anti-cheat pode punir). Quem assiste vê a
+  última imagem com um aviso até a janela ser aberta de novo. Janelas minimizadas também não
+  aparecem na lista para escolher.
 - **Áudio da tela em Windows antigo.** O som do computador é capturado sem o som do próprio
   Gordium (as vozes da chamada não voltam na transmissão), o que depende do Windows 10 versão 2004
   ou mais novo. Em versões anteriores, os outros podem ouvir eco da própria voz.

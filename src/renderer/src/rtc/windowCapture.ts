@@ -3,12 +3,12 @@ import type { WindowTrack } from '../../../shared/types'
 const api = window.gordium
 
 /*
- * Captura própria de janela. O Chromium captura janelas de outros programas de
- * um jeito frágil (falha sem foco, coberta ou minimizada) ou desenhando a borda
- * amarela do Windows 10. Aqui o app captura o monitor em que a janela está, o
- * método confiável, e recorta cada quadro só na área dela, seguindo a posição que
- * o processo principal manda. O que estiver por cima da janela sai preto, para
- * não vazar outras janelas; minimizada, vai um quadro de "pausado".
+ * Transmissão de janela. A captura da própria janela (GDI do Chromium, sem a
+ * borda amarela do Windows 10) já mostra o conteúdo dela mesmo com outros apps
+ * por cima. O que falta é a janela minimizada: o Windows para de desenhá-la e
+ * nenhum método de captura recebe imagem nova. Aqui os quadros passam direto
+ * enquanto ela está visível; minimizada, quem assiste vê a última imagem
+ * escurecida com um aviso, e a transmissão volta sozinha quando ela é aberta.
  */
 
 // APIs de vídeo do Chromium (Insertable Streams), ainda fora do lib.dom do TypeScript.
@@ -23,14 +23,14 @@ const chromium = globalThis as unknown as {
   MediaStreamTrackGenerator?: new (init: { kind: 'video' }) => TrackGenerator
 }
 
-export const canCropWindows =
+export const canProcessVideo =
   typeof chromium.MediaStreamTrackProcessor === 'function' && typeof chromium.MediaStreamTrackGenerator === 'function'
 
 const PAUSED_FRAME_MS = 500
 /** Janela fechada: mostra o aviso um tempinho e encerra a transmissão. */
 const GONE_STOP_MS = 3000
 
-/** Guarda a última posição da janela; começa a ouvir antes de a captura existir. */
+/** Guarda o último estado da janela; começa a ouvir antes de a captura existir. */
 export interface WindowFollower {
   latest(): WindowTrack | null
   stop(): void
@@ -47,80 +47,59 @@ export interface WindowCapture {
   stop(): void
 }
 
-export function cropWindow(raw: MediaStreamTrack, follow: WindowFollower, maxWidth: number, maxHeight: number, onGone: () => void): WindowCapture {
+export function windowCapture(raw: MediaStreamTrack, follow: WindowFollower, onGone: () => void): WindowCapture {
   const processor = new chromium.MediaStreamTrackProcessor!({ track: raw })
   const generator = new chromium.MediaStreamTrackGenerator!({ kind: 'video' })
   const reader = processor.readable.getReader()
   const writer = generator.writable.getWriter()
   const canvas = new OffscreenCanvas(2, 2)
   const ctx = canvas.getContext('2d', { alpha: false })!
+  let last: VideoFrame | null = null
   let running = true
   let goneSince = 0
 
-  const emit = (): void => {
-    void writer.write(new VideoFrame(canvas, { timestamp: Math.round(performance.now() * 1000) })).catch(() => {})
-  }
-
-  /** Tamanho de saída: cabe na qualidade escolhida, mantendo a proporção, em números pares. */
-  const sizeFor = (w: number, h: number): void => {
-    const k = Math.min(1, maxWidth / w, maxHeight / h)
-    const ow = Math.max(2, Math.round((w * k) / 2) * 2)
-    const oh = Math.max(2, Math.round((h * k) / 2) * 2)
-    if (canvas.width !== ow || canvas.height !== oh) {
-      canvas.width = ow
-      canvas.height = oh
-    }
-  }
+  // Um relógio só para todos os quadros (os de "pausado" são gerados aqui).
+  const now = (): number => Math.round(performance.now() * 1000)
 
   void (async () => {
     while (running) {
       const { value: frame, done } = await reader.read()
       if (done || !frame) break
-      try {
-        const t = follow.latest()
-        if (!t || t.state !== 'visible') continue // o quadro de "pausado" cuida disso
-        // Recorte preso aos limites do monitor (janela parcialmente fora dele).
-        const x0 = Math.max(0, t.x)
-        const y0 = Math.max(0, t.y)
-        const x1 = Math.min(t.monitorWidth, t.x + t.width)
-        const y1 = Math.min(t.monitorHeight, t.y + t.height)
-        if (x1 <= x0 || y1 <= y0) continue
-        // O quadro pode vir em escala diferente dos pixels físicos do monitor.
-        const fx = frame.displayWidth / t.monitorWidth
-        const fy = frame.displayHeight / t.monitorHeight
-        sizeFor(x1 - x0, y1 - y0)
-        ctx.drawImage(frame, x0 * fx, y0 * fy, (x1 - x0) * fx, (y1 - y0) * fy, 0, 0, canvas.width, canvas.height)
-        const kx = canvas.width / (x1 - x0)
-        const ky = canvas.height / (y1 - y0)
-        ctx.fillStyle = '#000'
-        for (const c of t.covered) ctx.fillRect((t.x + c.x - x0) * kx, (t.y + c.y - y0) * ky, c.width * kx, c.height * ky)
-        emit()
-      } finally {
+      if (follow.latest()?.state === 'gone') {
         frame.close()
+        continue
       }
+      last?.close()
+      last = frame.clone()
+      // Mesmo conteúdo, sem cópia: só ganha o carimbo de tempo do nosso relógio.
+      const out = new VideoFrame(frame, { timestamp: now() })
+      frame.close()
+      await writer.write(out).catch(() => out.close())
     }
   })().catch(() => {})
 
   const paused = setInterval(() => {
-    const t = follow.latest()
-    if (!running || !t || t.state === 'visible') {
+    const state = follow.latest()?.state
+    if (!running || !state || state === 'visible') {
       goneSince = 0
       return
     }
-    if (canvas.width < 64) sizeFor(Math.min(1280, maxWidth), Math.min(720, maxHeight))
-    ctx.fillStyle = '#1e1f22'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.fillStyle = '#dbdee1'
-    ctx.font = `600 ${Math.max(14, Math.round(canvas.height / 20))}px "Segoe UI", sans-serif`
+    const w = last?.displayWidth ?? 1280
+    const h = last?.displayHeight ?? 720
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    if (last) ctx.drawImage(last, 0, 0, w, h)
+    ctx.fillStyle = last ? 'rgba(0, 0, 0, 0.55)' : '#1e1f22'
+    ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = '#f2f3f5'
+    ctx.font = `600 ${Math.max(14, Math.round(h / 20))}px "Segoe UI", sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(
-      t.state === 'minimized' ? 'Janela minimizada · transmissão pausada' : 'A janela transmitida foi fechada',
-      canvas.width / 2,
-      canvas.height / 2
-    )
-    emit()
-    if (t.state === 'gone') {
+    ctx.fillText(state === 'minimized' ? 'Janela minimizada · volta quando ela for aberta' : 'A janela transmitida foi fechada', w / 2, h / 2)
+    void writer.write(new VideoFrame(canvas, { timestamp: now() })).catch(() => {})
+    if (state === 'gone') {
       goneSince ||= Date.now()
       if (Date.now() - goneSince > GONE_STOP_MS) onGone()
     }
@@ -135,6 +114,8 @@ export function cropWindow(raw: MediaStreamTrack, follow: WindowFollower, maxWid
       follow.stop()
       void api.stopWindowTracking()
       void reader.cancel().catch(() => {})
+      last?.close()
+      last = null
       raw.stop()
       generator.stop()
     }

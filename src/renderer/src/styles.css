@@ -1557,7 +1557,8 @@ label select {
 
 .soundboard {
   position: fixed;
-  z-index: 150;
+  /* abaixo dos modais (100): adicionar ou apagar um som abre um modal por cima */
+  z-index: 90;
   left: 50%;
   bottom: 96px;
   transform: translateX(-50%);
@@ -1667,4 +1668,83 @@ label select {
   height: 34px;
   text-align: center;
   font-size: 16px !important;
+}
+
+/* --- trecho do som (AudioTrimmer) --- */
+
+.trimmer-field {
+  margin-bottom: 16px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.trimmer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg-rail);
+}
+
+.trimmer-wave,
+.trimmer-overview {
+  display: block;
+  width: 100%;
+  touch-action: none;
+  user-select: none;
+}
+
+.trimmer-overview {
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.trimmer-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.trimmer-play {
+  height: 36px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.trimmer-time {
+  margin: 0;
+  gap: 4px;
+  width: 96px;
+}
+
+.trimmer-time input {
+  height: 36px;
+  padding: 6px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trimmer-length {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.trimmer-length small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
 }

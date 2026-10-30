@@ -40,8 +40,7 @@ export interface GordiumApi {
   onSignal(cb: (network: string, peer: string, signal: RtcSignal) => void): () => void
 
   getScreenSources(): Promise<ScreenSource[]>
-  /** crop: usar a captura própria de janela (monitor + recorte) quando a fonte for uma janela. */
-  selectScreenSource(id: string, audio: boolean, crop: boolean): Promise<ScreenChoice>
+  selectScreenSource(id: string, audio: boolean): Promise<ScreenChoice>
   onWindowTrack(cb: (track: WindowTrack) => void): () => void
   stopWindowTracking(): Promise<void>
 
