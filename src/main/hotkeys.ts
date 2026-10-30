@@ -1,52 +1,59 @@
-import { globalShortcut } from 'electron'
 import koffi from 'koffi'
-import { parseHotkey } from '../shared/hotkeys'
+import { isHotkey, isModifierKey, type Hotkey } from '../shared/hotkeys'
 import { systemFile } from './system'
 
-/** Enquanto a tecla segue apertada, olha de tanto em tanto se já foi solta. */
-const RELEASE_POLL_MS = 40
-/** Se a leitura do teclado falhar, o atalho volta a valer depois disso. */
-const MAX_HOLD_MS = 10_000
+/*
+ * Atalho global de mutar. Em vez de registrar o atalho no Windows (que tira a
+ * tecla dos outros programas), olha o estado da tecla de tanto em tanto: o
+ * Gordium só observa, a tecla continua funcionando em qualquer lugar, e por
+ * isso uma tecla sozinha (ou um botão lateral do mouse) serve de atalho.
+ */
 
-let current: string | null = null
-let held: NodeJS.Timeout | null = null
+/** Um toque rápido numa tecla dura uns 50 ms: olhando a cada 15 ms, nenhum escapa. */
+const POLL_MS = 15
+
+const VK_SHIFT = 0x10
+const VK_CONTROL = 0x11
+const VK_MENU = 0x12
+const VK_LWIN = 0x5b
+const VK_RWIN = 0x5c
+
 let getAsyncKeyState: ((vk: number) => number) | null = null
+let timer: NodeJS.Timeout | null = null
 
 function isDown(vk: number): boolean {
-  try {
-    getAsyncKeyState ??= koffi.load(systemFile('user32.dll')).func('int16_t __stdcall GetAsyncKeyState(int vKey)')
-    return (getAsyncKeyState(vk) & 0x8000) !== 0
-  } catch {
-    return false
-  }
+  getAsyncKeyState ??= koffi.load(systemFile('user32.dll')).func('int16_t __stdcall GetAsyncKeyState(int vKey)')
+  return (getAsyncKeyState(vk) & 0x8000) !== 0
 }
 
 /**
- * Registra o atalho global de mutar (null desliga). Devolve false se o Windows
- * recusar, normalmente porque outro programa já usa a mesma combinação.
+ * Ctrl/Alt/Shift/Win exatamente como no atalho: "F9" não dispara com Ctrl+F9
+ * (que pode ser de outro programa). Um modificador sozinho como atalho vale
+ * com qualquer combinação.
  */
-export function setMuteHotkey(accelerator: string | null, onPress: () => void): boolean {
-  if (current) globalShortcut.unregister(current)
-  current = null
-  if (accelerator === null) return true
-  const parsed = parseHotkey(accelerator)
-  if (!parsed) throw new Error('Atalho inválido.')
-  let ok = false
-  try {
-    ok = globalShortcut.register(accelerator, () => {
-      // Segurar a tecla faz o Windows repetir o atalho: só vale de novo depois de soltá-la.
-      if (held) return
-      onPress()
-      const since = Date.now()
-      held = setInterval(() => {
-        if (isDown(parsed.key.vk) && Date.now() - since < MAX_HOLD_MS) return
-        clearInterval(held!)
-        held = null
-      }, RELEASE_POLL_MS)
-    })
-  } catch {
-    ok = false
-  }
-  if (ok) current = accelerator
-  return ok
+function modifiersMatch(hotkey: Hotkey): boolean {
+  if (isModifierKey(hotkey.vk)) return true
+  return (
+    isDown(VK_CONTROL) === hotkey.ctrl &&
+    isDown(VK_MENU) === hotkey.alt &&
+    isDown(VK_SHIFT) === hotkey.shift &&
+    (isDown(VK_LWIN) || isDown(VK_RWIN)) === hotkey.win
+  )
+}
+
+/** Liga o atalho de mutar (null desliga). `onPress` roda uma vez a cada vez que a tecla é apertada. */
+export function setMuteHotkey(hotkey: unknown, onPress: () => void): void {
+  if (timer) clearInterval(timer)
+  timer = null
+  if (hotkey === null) return
+  if (!isHotkey(hotkey)) throw new Error('Atalho inválido.')
+  isDown(hotkey.vk) // carrega a user32 agora: se falhar, o erro chega na interface
+  // Começa como "apertada": a tecla que a pessoa acabou de gravar só conta depois de solta.
+  let wasDown = true
+  timer = setInterval(() => {
+    const down = isDown(hotkey.vk)
+    // Segurar a tecla não fica alternando: só conta quando ela passa de solta para apertada.
+    if (down && !wasDown && modifiersMatch(hotkey)) onPress()
+    wasDown = down
+  }, POLL_MS)
 }

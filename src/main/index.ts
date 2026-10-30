@@ -263,9 +263,7 @@ function setupIpc(): void {
   ipcMain.handle('screen:stop-tracking', () => stopWindowTracking())
 
   // Atalho global de mutar: a interface escolhe a tecla; desligado até a pessoa ativar.
-  ipcMain.handle('hotkey:mute', (_e, accelerator: unknown) =>
-    setMuteHotkey(typeof accelerator === 'string' ? accelerator : null, () => send('hotkey:mute'))
-  )
+  ipcMain.handle('hotkey:mute', (_e, hotkey: unknown) => setMuteHotkey(hotkey, () => send('hotkey:mute')))
 
   ipcMain.handle('vpn:start', () => core.startVpn())
   ipcMain.handle('vpn:stop', () => core.stopVpn())

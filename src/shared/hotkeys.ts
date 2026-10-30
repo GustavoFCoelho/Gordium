@@ -1,110 +1,149 @@
 /*
- * Atalho global de mutar/desmutar. A interface monta o atalho a partir da tecla
- * pressionada e o processo principal o registra no Windows (globalShortcut),
- * por isso funciona com o Gordium em segundo plano, dentro de um jogo. O
- * Windows reserva a combinação para o Gordium: ela deixa de chegar aos outros
- * programas. Por isso letras, números e teclas de edição só valem com Ctrl,
- * Alt ou Shift; sozinhas, só teclas que quase nenhum programa usa.
+ * Atalho global de mutar/desmutar. A interface grava a tecla (ou um botão
+ * lateral do mouse) e o processo principal fica olhando o estado dela no
+ * Windows, por isso funciona com o Gordium em segundo plano, dentro de um jogo.
+ * O Gordium só observa: a tecla continua chegando aos outros programas, então
+ * qualquer tecla serve sozinha, sem precisar de Ctrl, Alt ou Shift.
  */
 
-interface KeyDef {
-  /** Nome no acelerador do Electron. */
-  accel: string
-  /** Nome mostrado na interface. */
-  label: string
-  /** Código virtual do Windows (para saber quando a tecla foi solta). */
+export interface Hotkey {
+  /** Código virtual do Windows da tecla (ou botão do mouse). */
   vk: number
-  /** Pode ser usada sem Ctrl/Alt/Shift. */
-  alone: boolean
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+  win: boolean
+  /** Como aparece na interface: "F9", "M", "Ctrl + M", "Ctrl direito", "Mouse 4". */
+  label: string
 }
 
-const KEYS = new Map<string, KeyDef>()
-const add = (code: string, accel: string, label: string, vk: number, alone: boolean): void => {
-  KEYS.set(code, { accel, label, vk, alone })
+/** Códigos virtuais de cada lado dos modificadores (para usar um deles sozinho como atalho). */
+const SIDE_VK: Record<string, number> = {
+  ShiftLeft: 0xa0,
+  ShiftRight: 0xa1,
+  ControlLeft: 0xa2,
+  ControlRight: 0xa3,
+  AltLeft: 0xa4,
+  AltRight: 0xa5,
+  MetaLeft: 0x5b,
+  MetaRight: 0x5c
+}
+const MODIFIER_VKS = new Set([0x10, 0x11, 0x12, ...Object.values(SIDE_VK)])
+
+/** A tecla do atalho é um modificador (ex.: "Ctrl direito" sozinho). */
+export const isModifierKey = (vk: number): boolean => MODIFIER_VKS.has(vk)
+
+/** Mouse: botões laterais ("voltar" e "avançar"), comuns como tecla de microfone. */
+const MOUSE_BUTTONS: Record<number, { vk: number; label: string }> = {
+  3: { vk: 0x05, label: 'Mouse 4' },
+  4: { vk: 0x06, label: 'Mouse 5' }
 }
 
-for (let i = 0; i < 26; i++) {
-  const letter = String.fromCharCode(65 + i)
-  add(`Key${letter}`, letter, letter, 0x41 + i, false)
-}
-for (let i = 0; i <= 9; i++) add(`Digit${i}`, String(i), String(i), 0x30 + i, false)
-for (let i = 1; i <= 24; i++) add(`F${i}`, `F${i}`, `F${i}`, 0x70 + i - 1, true)
-for (let i = 0; i <= 9; i++) add(`Numpad${i}`, `num${i}`, `Num ${i}`, 0x60 + i, true)
-add('NumpadAdd', 'numadd', 'Num +', 0x6b, true)
-add('NumpadSubtract', 'numsub', 'Num -', 0x6d, true)
-add('NumpadMultiply', 'nummult', 'Num *', 0x6a, true)
-add('NumpadDivide', 'numdiv', 'Num /', 0x6f, true)
-add('NumpadDecimal', 'numdec', 'Num ,', 0x6e, true)
-add('Insert', 'Insert', 'Insert', 0x2d, true)
-add('ScrollLock', 'Scrolllock', 'Scroll Lock', 0x91, true)
-add('Delete', 'Delete', 'Delete', 0x2e, false)
-add('Home', 'Home', 'Home', 0x24, false)
-add('End', 'End', 'End', 0x23, false)
-add('PageUp', 'PageUp', 'Page Up', 0x21, false)
-add('PageDown', 'PageDown', 'Page Down', 0x22, false)
-add('ArrowUp', 'Up', '↑', 0x26, false)
-add('ArrowDown', 'Down', '↓', 0x28, false)
-add('ArrowLeft', 'Left', '←', 0x25, false)
-add('ArrowRight', 'Right', '→', 0x27, false)
-add('Space', 'Space', 'Espaço', 0x20, false)
-
-const MODIFIERS = [
-  ['Ctrl', 'Ctrl'],
-  ['Alt', 'Alt'],
-  ['Shift', 'Shift'],
-  ['Super', 'Win']
-] as const
-
-/** Atalhos que atrapalhariam o próprio Windows. */
-const RESERVED = new Set(['Alt+F4', 'Ctrl+Alt+Delete', 'Super+L'])
-
-const byAccel = new Map([...KEYS.values()].map((k) => [k.accel, k]))
-
-export interface ParsedHotkey {
-  modifiers: string[]
-  key: KeyDef
+const NAMES: Record<string, string> = {
+  ShiftLeft: 'Shift esquerdo',
+  ShiftRight: 'Shift direito',
+  ControlLeft: 'Ctrl esquerdo',
+  ControlRight: 'Ctrl direito',
+  AltLeft: 'Alt',
+  AltRight: 'Alt direito',
+  MetaLeft: 'Win',
+  MetaRight: 'Win direito',
+  Space: 'Espaço',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  PageUp: 'Page Up',
+  PageDown: 'Page Down',
+  CapsLock: 'Caps Lock',
+  NumLock: 'Num Lock',
+  ScrollLock: 'Scroll Lock',
+  PrintScreen: 'Print Screen',
+  ContextMenu: 'Menu',
+  NumpadAdd: 'Num +',
+  NumpadSubtract: 'Num -',
+  NumpadMultiply: 'Num *',
+  NumpadDivide: 'Num /',
+  NumpadDecimal: 'Num ,',
+  NumpadEnter: 'Num Enter'
 }
 
-/** Lê um acelerador gerado por `hotkeyFromEvent`; null se não for um atalho aceito. */
-export function parseHotkey(accelerator: string): ParsedHotkey | null {
-  if (typeof accelerator !== 'string' || accelerator.length > 64 || RESERVED.has(accelerator)) return null
-  const parts = accelerator.split('+')
-  const key = byAccel.get(parts.pop() ?? '')
-  if (!key) return null
-  const order = MODIFIERS.map(([accel]) => accel as string)
-  // Modificadores sem repetição e na ordem de sempre: um atalho tem uma escrita só.
-  if (parts.some((p, i) => !order.includes(p) || (i > 0 && order.indexOf(p) <= order.indexOf(parts[i - 1])))) return null
-  if (parts.length === 0 && !key.alone) return null
-  return { modifiers: parts, key }
+function keyName(e: { code: string; key: string }): string {
+  if (NAMES[e.code]) return NAMES[e.code]
+  const numpad = /^Numpad(\d)$/.exec(e.code)
+  if (numpad) return `Num ${numpad[1]}`
+  if (e.key.length === 1) return e.key.toUpperCase()
+  return e.key && e.key !== 'Dead' && e.key !== 'Unidentified' ? e.key : e.code
 }
 
-/** "Ctrl + Shift + M" */
-export function hotkeyLabel(accelerator: string): string {
-  const parsed = parseHotkey(accelerator)
-  if (!parsed) return accelerator
-  const names = new Map<string, string>(MODIFIERS)
-  return [...parsed.modifiers.map((m) => names.get(m) ?? m), parsed.key.label].join(' + ')
+interface Mods {
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
 }
 
-/** Só as teclas modificadoras, para mostrar enquanto a pessoa ainda monta a combinação. */
-export function modifiersLabel(e: { ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }): string {
-  const held = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win'].filter(Boolean)
-  return held.join(' + ')
+function build(vk: number, name: string, e: Mods): Hotkey {
+  const hotkey = { vk, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, label: '' }
+  hotkey.label = [hotkey.ctrl && 'Ctrl', hotkey.alt && 'Alt', hotkey.shift && 'Shift', hotkey.win && 'Win', name].filter(Boolean).join(' + ')
+  return hotkey
 }
 
-export type HotkeyResult = { ok: true; accelerator: string } | { ok: false; error: string | null }
+/** Os modificadores apertados agora, para mostrar enquanto a pessoa monta a combinação. */
+export function modifiersLabel(e: Mods): string {
+  return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win'].filter(Boolean).join(' + ')
+}
 
-/** Monta o atalho a partir de uma tecla pressionada. `error: null` = só modificadores, ainda esperando a tecla. */
-export function hotkeyFromEvent(e: { code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }): HotkeyResult {
-  if (/^(Control|Alt|Shift|Meta|OS)(Left|Right)?$/.test(e.code)) return { ok: false, error: null }
-  const key = KEYS.get(e.code)
-  if (!key) return { ok: false, error: 'Essa tecla não pode ser usada. Tente uma tecla F, do teclado numérico ou uma letra com Ctrl/Alt/Shift.' }
-  const flags = [e.ctrlKey, e.altKey, e.shiftKey, e.metaKey]
-  const modifiers = MODIFIERS.filter((_, i) => flags[i]).map(([accel]) => accel)
-  if (modifiers.length === 0 && !key.alone) {
-    return { ok: false, error: `Use ${key.label} junto com Ctrl, Alt ou Shift: sozinha, ela deixaria de funcionar nos outros programas.` }
+export type HotkeyResult = { ok: true; hotkey: Hotkey } | { ok: false; error: string | null }
+
+/**
+ * Atalho a partir de uma tecla apertada. Modificadores dão `error: null`: a
+ * pessoa ainda pode completar a combinação (ou soltar, ver `hotkeyFromRelease`).
+ */
+export function hotkeyFromKeyDown(e: Mods & { code: string; key: string; keyCode: number }): HotkeyResult {
+  if (SIDE_VK[e.code] || isModifierKey(e.keyCode)) return { ok: false, error: null }
+  // 229: tecla indo para um editor de texto (IME), sem código próprio.
+  if (!Number.isInteger(e.keyCode) || e.keyCode <= 0 || e.keyCode > 254 || e.keyCode === 229) {
+    return { ok: false, error: 'Essa tecla não pode ser usada. Tente outra.' }
   }
-  const accelerator = [...modifiers, key.accel].join('+')
-  if (RESERVED.has(accelerator)) return { ok: false, error: 'Esse atalho é do Windows. Escolha outro.' }
-  return { ok: true, accelerator }
+  return { ok: true, hotkey: build(e.keyCode, keyName(e), e) }
+}
+
+/** Soltou um modificador sem apertar outra tecla: ele sozinho vira o atalho (ex.: Ctrl direito). */
+export function hotkeyFromRelease(code: string): Hotkey | null {
+  const vk = SIDE_VK[code]
+  return vk ? build(vk, NAMES[code], { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }) : null
+}
+
+/** Botão lateral do mouse; null para os outros botões. */
+export function hotkeyFromMouse(e: Mods & { button: number }): Hotkey | null {
+  const button = MOUSE_BUTTONS[e.button]
+  return button ? build(button.vk, button.label, e) : null
+}
+
+/** Confere um atalho vindo da interface ou das configurações salvas. */
+export function isHotkey(x: unknown): x is Hotkey {
+  if (typeof x !== 'object' || x === null) return false
+  const h = x as Record<string, unknown>
+  return (
+    Number.isInteger(h.vk) &&
+    (h.vk as number) > 0 &&
+    (h.vk as number) <= 254 &&
+    ['ctrl', 'alt', 'shift', 'win'].every((k) => typeof h[k] === 'boolean') &&
+    typeof h.label === 'string' &&
+    h.label.length <= 64
+  )
+}
+
+/** A versão 0.1.10 guardava o atalho como acelerador do Electron ("Ctrl+Alt+Shift+F9"). */
+export function hotkeyFromAccelerator(accelerator: string): Hotkey | null {
+  const parts = accelerator.split('+')
+  const key = parts.pop() ?? ''
+  let vk = 0
+  if (/^[A-Z0-9]$/.test(key)) vk = key.charCodeAt(0)
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(key)) vk = 0x6f + Number(key.slice(1))
+  else if (/^num\d$/.test(key)) vk = 0x60 + Number(key.slice(3))
+  if (!vk) return null
+  const name = key.startsWith('num') ? `Num ${key.slice(3)}` : key
+  return build(vk, name, { ctrlKey: parts.includes('Ctrl'), altKey: parts.includes('Alt'), shiftKey: parts.includes('Shift'), metaKey: parts.includes('Super') })
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { hotkeyFromEvent, hotkeyLabel, modifiersLabel } from '../../../shared/hotkeys'
+import { hotkeyFromKeyDown, hotkeyFromMouse, hotkeyFromRelease, modifiersLabel, type Hotkey } from '../../../shared/hotkeys'
 import type { AppState, ChannelInfo, ChannelKind, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
 import { call, SCREEN_QUALITIES, useCall } from '../rtc/call'
 import { decodeAudioFile, encodeSound, MAX_SOUND_SECONDS, suggestSegment, type Segment } from '../rtc/soundboard'
@@ -382,34 +382,52 @@ function DeviceSelect({ kind, value, onChange, devices }: { kind: MediaDeviceKin
 /** Atalho global de mutar/desmutar: desligado por padrão; ao ativar, a pessoa aperta a tecla que quer usar. */
 function MuteHotkeyField() {
   const c = useCall()
-  const { muteHotkeyEnabled: enabled, muteHotkey } = c.settings
+  const { muteHotkeyEnabled: enabled, muteKey } = c.settings
   const [recording, setRecording] = useState(false)
   const [held, setHeld] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
 
   useEffect(() => {
     if (!recording) return
-    // O atalho atual não pode engolir a tecla que a pessoa vai apertar.
+    // Enquanto grava, apertar a tecla atual não alterna o microfone.
     c.pauseHotkey(true)
+    const save = (hotkey: Hotkey) => {
+      setRecording(false)
+      setProblem(null)
+      void c.setSettings({ muteKey: hotkey, muteHotkeyEnabled: true })
+    }
+    // Modificador apertado por último: se for solto sem outra tecla, ele sozinho vira o atalho.
+    let lastModifier = ''
     const onDown = (e: KeyboardEvent) => {
       // Captura antes de todo mundo: Esc aqui cancela a gravação, não fecha as configurações.
       e.preventDefault()
       e.stopPropagation()
+      if (e.repeat) return
       if (e.code === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) return setRecording(false)
-      const result = hotkeyFromEvent(e)
-      if (result.ok) {
-        setRecording(false)
-        setProblem(null)
-        void c.setSettings({ muteHotkey: result.accelerator, muteHotkeyEnabled: true })
-      } else if (result.error === null) setHeld(modifiersLabel(e))
+      const result = hotkeyFromKeyDown(e)
+      lastModifier = !result.ok && result.error === null ? e.code : ''
+      if (result.ok) save(result.hotkey)
+      else if (result.error === null) setHeld(modifiersLabel(e))
       else setProblem(result.error)
     }
-    const onUp = (e: KeyboardEvent) => setHeld(modifiersLabel(e))
+    const onUp = (e: KeyboardEvent) => {
+      const alone = e.code === lastModifier ? hotkeyFromRelease(e.code) : null
+      if (alone) save(alone)
+      else setHeld(modifiersLabel(e))
+    }
+    const onMouse = (e: MouseEvent) => {
+      const hotkey = hotkeyFromMouse(e)
+      if (!hotkey) return
+      e.preventDefault()
+      save(hotkey)
+    }
     window.addEventListener('keydown', onDown, true)
     window.addEventListener('keyup', onUp, true)
+    window.addEventListener('mousedown', onMouse, true)
     return () => {
       window.removeEventListener('keydown', onDown, true)
       window.removeEventListener('keyup', onUp, true)
+      window.removeEventListener('mousedown', onMouse, true)
       setHeld('')
       c.pauseHotkey(false)
     }
@@ -418,7 +436,7 @@ function MuteHotkeyField() {
   const toggle = (on: boolean) => {
     setProblem(null)
     void c.setSettings({ muteHotkeyEnabled: on })
-    setRecording(on && !muteHotkey)
+    setRecording(on && !muteKey)
   }
 
   return (
@@ -437,15 +455,17 @@ function MuteHotkeyField() {
               setRecording(!recording)
             }}
           >
-            {recording ? (held ? `${held} + …` : 'Pressione a tecla…') : muteHotkey ? hotkeyLabel(muteHotkey) : 'Escolher tecla'}
+            {recording ? (held ? `${held} + …` : 'Pressione uma tecla…') : muteKey ? muteKey.label : 'Escolher tecla'}
           </button>
-          <span className="hint small">{recording ? 'Esc cancela' : muteHotkey ? 'Clique para trocar' : ''}</span>
+          <span className="hint small">
+            {recording ? 'Esc cancela · vale também botão lateral do mouse' : muteKey ? 'Clique para trocar' : ''}
+          </span>
         </div>
       )}
       {enabled && (problem ?? (!recording && c.hotkeyError)) && <div className="form-error">{problem ?? c.hotkeyError}</div>}
       <p className="hint small">
-        Funciona com o Gordium em segundo plano, como no meio de um jogo. Enquanto estiver ativo, a combinação fica reservada
-        para o Gordium e não chega aos outros programas.
+        Funciona com o Gordium em segundo plano, como no meio de um jogo, e a tecla continua funcionando normalmente nos outros
+        programas. Se escolher uma tecla de digitar (como uma letra), o microfone também alterna quando você digitar com ela.
       </p>
     </div>
   )

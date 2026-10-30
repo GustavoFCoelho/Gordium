@@ -170,9 +170,27 @@ function writeBeep(path) {
 const BEEP = join(SHOTS, 'buzina.wav')
 writeBeep(BEEP)
 
-/** Aperta uma combinação no teclado do Windows (fora do app), como a pessoa faria dentro de um jogo. */
-const pressKeys = (keys) =>
-  spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}')`])
+/**
+ * Aperta uma tecla no teclado do Windows (fora do app), como a pessoa faria dentro de um jogo,
+ * segurando por 100 ms como um dedo (o Gordium olha o estado da tecla a cada 15 ms).
+ */
+const pressKey = (vk, { holdMs = 100, withVk = 0 } = {}) => {
+  const down = (k) => `[E2E.Keys]::keybd_event(${k}, 0, 0, [UIntPtr]::Zero); `
+  const up = (k) => `[E2E.Keys]::keybd_event(${k}, 0, 2, [UIntPtr]::Zero); `
+  spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `Add-Type -Namespace E2E -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);'; ` +
+      (withVk ? down(withVk) : '') +
+      down(vk) +
+      `Start-Sleep -Milliseconds ${holdMs}; ` +
+      up(vk) +
+      (withVk ? up(withVk) : '')
+  ])
+}
+const VK_F13 = 0x7c
+const VK_CONTROL = 0x11
 
 /** Se a outra pessoa aparece mutada na lista da sala. */
 const seesMuted = (name) =>
@@ -273,26 +291,46 @@ try {
   log('  som tocado no Bruno:', await B.evaluate(`window.__sfx.map(x => x.d.toFixed(2) + ' s, ' + Math.round(x.hz) + ' Hz').join(' | ')`))
   await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
 
-  // atalho de mutar: vem desligado; a Alice ativa, grava Ctrl+Alt+Shift+F9 e usa com o app em segundo plano
+  // atalho de mutar: vem desligado; a Alice ativa e grava uma tecla só, sem Ctrl/Alt/Shift
+  const keyEvent = (type, code, key, keyCode, extra = '') =>
+    `window.dispatchEvent(new KeyboardEvent('${type}', { code: '${code}', key: '${key}', keyCode: ${keyCode}${extra}, bubbles: true }))`
   await A.evaluate(click('.icon-button[title="Configurações"]'))
   await A.until('configurações abertas, atalho desligado', `document.querySelector('.hotkey-setting input[type=checkbox]')?.checked === false`)
   await A.evaluate(click('.hotkey-setting input[type=checkbox]'))
-  await A.until('gravando a tecla', `document.querySelector('.hotkey-key')?.textContent === 'Pressione a tecla…'`, 5000)
-  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'm', bubbles: true }))`)
-  await A.until('letra sozinha é recusada', hasText('.hotkey-setting .form-error', 'junto com Ctrl'), 5000)
-  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', key: 'F9', ctrlKey: true, altKey: true, shiftKey: true, bubbles: true }))`)
-  await A.until('atalho gravado', `document.querySelector('.hotkey-key')?.textContent === 'Ctrl + Alt + Shift + F9'`, 5000)
+  await A.until('gravando a tecla', `document.querySelector('.hotkey-key')?.textContent === 'Pressione uma tecla…'`, 5000)
+  await A.evaluate(keyEvent('keydown', 'KeyM', 'm', 77))
+  await A.until('letra sozinha aceita', `document.querySelector('.hotkey-key')?.textContent === 'M'`, 5000)
+  await A.evaluate(click('.hotkey-key'))
+  await A.evaluate(keyEvent('keydown', 'ControlRight', 'Control', 17, ', ctrlKey: true'))
+  await A.evaluate(keyEvent('keyup', 'ControlRight', 'Control', 17))
+  await A.until('Ctrl direito sozinho aceito', `document.querySelector('.hotkey-key')?.textContent === 'Ctrl direito'`, 5000)
+  await A.evaluate(click('.hotkey-key'))
+  await A.evaluate(keyEvent('keydown', 'F13', 'F13', VK_F13))
+  await A.until('F13 gravado', `document.querySelector('.hotkey-key')?.textContent === 'F13'`, 5000)
   await sleep(500)
-  await A.until('Windows aceitou o atalho', `!document.querySelector('.hotkey-setting .form-error')`, 5000)
+  await A.until('atalho ligado sem erro', `!document.querySelector('.hotkey-setting .form-error')`, 5000)
   await A.shot('04b-atalho-mutar')
   await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
-  await A.until('dica do botão mostra o atalho', `!!document.querySelector('.call-controls .round-button[title="Silenciar (Ctrl + Alt + Shift + F9)"]')`, 5000)
-  pressKeys('^%+{F9}')
+  await A.until('dica do botão mostra o atalho', `!!document.querySelector('.call-controls .round-button[title="Silenciar (F13)"]')`, 5000)
+  pressKey(VK_F13)
   await B.until('Bruno vê a Alice mutada pelo atalho', seesMuted('Alice'), 10000)
   await A.until('Alice ouve o som de mutar', `JSON.stringify(window.__cues.slice(-2)) === '[523,392]'`, 5000)
-  pressKeys('^%+{F9}')
+  pressKey(VK_F13)
   await B.until('Bruno vê a Alice desmutada pelo atalho', `!(${seesMuted('Alice')})`, 10000)
   await A.until('Alice ouve o som de desmutar', `JSON.stringify(window.__cues.slice(-2)) === '[392,523]'`, 5000)
+  // segurar a tecla alterna uma vez só; Ctrl+F13 não é o atalho "F13"
+  const cuesBefore = await A.evaluate('window.__cues.length')
+  pressKey(VK_F13, { holdMs: 1500 })
+  await B.until('segurando a tecla: mutou', seesMuted('Alice'), 10000)
+  await sleep(1000)
+  if ((await A.evaluate('window.__cues.length')) !== cuesBefore + 2) throw new Error('segurar a tecla alternou mais de uma vez')
+  log('ok: segurar a tecla alterna uma vez só')
+  pressKey(VK_F13, { withVk: VK_CONTROL })
+  await sleep(1000)
+  if (!(await B.evaluate(seesMuted('Alice')))) throw new Error('Ctrl+F13 disparou o atalho F13')
+  log('ok: Ctrl+F13 não dispara o atalho F13')
+  pressKey(VK_F13)
+  await B.until('Bruno vê a Alice desmutada de novo', `!(${seesMuted('Alice')})`, 10000)
 
   await A.evaluate(click('.call-controls .round-button[title="Câmera"]'))
   await B.until('Bruno recebe a câmera da Alice', `[...document.querySelectorAll('.tile video')].some(v => v.videoWidth > 0 && !v.paused)`, 30000)

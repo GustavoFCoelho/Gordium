@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { hotkeyLabel } from '../../../shared/hotkeys'
+import { hotkeyFromAccelerator, isHotkey, type Hotkey } from '../../../shared/hotkeys'
 import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
 import { toast } from '../store'
 import { playSoundboard } from './soundboard'
@@ -57,8 +57,8 @@ export interface DeviceSettings {
   soundboardVolume: number
   /** Atalho global de mutar/desmutar ligado (vem desligado; a pessoa ativa nas configurações). */
   muteHotkeyEnabled: boolean
-  /** Acelerador do Electron, ex.: "Ctrl+Shift+M"; vazio = nenhuma tecla escolhida. */
-  muteHotkey: string
+  /** A tecla do atalho; null = nenhuma escolhida ainda. */
+  muteKey: Hotkey | null
 }
 
 /** Um som do soundboard por pessoa a cada tanto, para ninguém metralhar a sala. */
@@ -110,9 +110,9 @@ class CallManager {
     sounds: true,
     soundboardVolume: 0.6,
     muteHotkeyEnabled: false,
-    muteHotkey: ''
+    muteKey: null
   })
-  /** O Windows recusou o atalho de mutar (outro programa já usa a combinação). */
+  /** O atalho de mutar não pôde ser ligado. */
   hotkeyError: string | null = null
   private hotkeyPaused = false
 
@@ -137,6 +137,7 @@ class CallManager {
     api.onSfx((network, peer, sound, channel) => {
       if (network === this.network && channel === this.channel && this.allowSfx(peer)) this.playSfx(sound)
     })
+    this.migrateHotkey()
     api.onMuteHotkey(() => this.toggleMuteByHotkey())
     void this.applyHotkey()
   }
@@ -313,15 +314,24 @@ class CallManager {
     if (this.settings.sounds) playCue(silenced ? 'unmute' : 'mute', this.settings.outputId)
   }
 
-  /** Registra (ou tira) o atalho global de mutar conforme as configurações. */
+  /** A 0.1.10 guardava o atalho como texto ("Ctrl+Alt+Shift+F9"); converte para o formato novo. */
+  private migrateHotkey(): void {
+    const saved = this.settings as DeviceSettings & { muteHotkey?: unknown }
+    if (!('muteHotkey' in saved) && (saved.muteKey === null || isHotkey(saved.muteKey))) return
+    const { muteHotkey, ...rest } = saved
+    const muteKey = isHotkey(rest.muteKey) ? rest.muteKey : typeof muteHotkey === 'string' ? hotkeyFromAccelerator(muteHotkey) : null
+    this.settings = { ...rest, muteKey }
+    localStorage.setItem('gordium.devices', JSON.stringify(this.settings))
+  }
+
+  /** Liga (ou desliga) o atalho global de mutar conforme as configurações. */
   private async applyHotkey(): Promise<void> {
-    const { muteHotkeyEnabled, muteHotkey } = this.settings
-    const accelerator = muteHotkeyEnabled && muteHotkey && !this.hotkeyPaused ? muteHotkey : null
+    const { muteHotkeyEnabled, muteKey } = this.settings
     let error: string | null = null
     try {
-      if (!(await api.setMuteHotkey(accelerator))) error = 'Outro programa já usa esse atalho. Escolha outra combinação.'
+      await api.setMuteHotkey(muteHotkeyEnabled && muteKey && !this.hotkeyPaused ? muteKey : null)
     } catch (err) {
-      error = (err as Error).message
+      error = `Não consegui ligar o atalho: ${(err as Error).message}`
     }
     this.hotkeyError = error
     this.changed()
@@ -330,11 +340,11 @@ class CallManager {
   /** Dica do botão de mutar, com o atalho quando ele está ativo. */
   get muteTitle(): string {
     const base = this.muted ? 'Ativar microfone' : 'Silenciar'
-    const { muteHotkeyEnabled, muteHotkey } = this.settings
-    return muteHotkeyEnabled && muteHotkey ? `${base} (${hotkeyLabel(muteHotkey)})` : base
+    const { muteHotkeyEnabled, muteKey } = this.settings
+    return muteHotkeyEnabled && muteKey ? `${base} (${muteKey.label})` : base
   }
 
-  /** Suspende o atalho enquanto a pessoa grava uma tecla nova (senão o atalho atual engoliria a tecla). */
+  /** Suspende o atalho enquanto a pessoa grava uma tecla nova (senão apertar a tecla atual alternaria o microfone). */
   pauseHotkey(paused: boolean): void {
     this.hotkeyPaused = paused
     void this.applyHotkey()
@@ -372,7 +382,7 @@ class CallManager {
       }
     }
     if (prev.outputId !== this.settings.outputId) this.applyVolumes()
-    if (prev.muteHotkeyEnabled !== this.settings.muteHotkeyEnabled || prev.muteHotkey !== this.settings.muteHotkey) void this.applyHotkey()
+    if (prev.muteHotkeyEnabled !== this.settings.muteHotkeyEnabled || prev.muteKey !== this.settings.muteKey) void this.applyHotkey()
     if (this.network && this.local.camera && prev.camId !== this.settings.camId) {
       await this.toggleCamera()
       await this.toggleCamera()

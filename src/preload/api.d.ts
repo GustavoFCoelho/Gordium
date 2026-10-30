@@ -10,6 +10,7 @@ import type {
   WindowTrack,
   VoiceState
 } from '../shared/types'
+import type { Hotkey } from '../shared/hotkeys'
 
 /** API que o preload expõe para a interface em window.gordium. */
 export interface GordiumApi {
@@ -44,8 +45,8 @@ export interface GordiumApi {
   onWindowTrack(cb: (track: WindowTrack) => void): () => void
   stopWindowTracking(): Promise<void>
 
-  /** Atalho global de mutar/desmutar (null desliga). false = o Windows recusou (outro programa usa a combinação). */
-  setMuteHotkey(accelerator: string | null): Promise<boolean>
+  /** Atalho global de mutar/desmutar (null desliga). */
+  setMuteHotkey(hotkey: Hotkey | null): Promise<void>
   onMuteHotkey(cb: () => void): () => void
 
   vpnStart(): Promise<void>
