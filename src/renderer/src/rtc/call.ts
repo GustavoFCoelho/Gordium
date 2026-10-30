@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
 import { toast } from '../store'
 import { playSoundboard } from './soundboard'
+import { canCropWindows, cropWindow, followWindow } from './windowCapture'
 import { playCue, type Cue } from './sounds'
 
 const api = window.gordium
@@ -107,6 +108,8 @@ class CallManager {
 
   private volumes: Record<string, number> = loadJson('gordium.volumes', {})
   private screenQuality = SCREEN_QUALITIES[0]
+  /** Encerra a captura em andamento (monitor bruto e, se houver, o recorte da janela). */
+  private screenCapture: { stop(): void } | null = null
   private peers: PeerInfo[] = []
   private readonly links = new Map<string, Link>()
   private readonly listeners = new Set<() => void>()
@@ -188,6 +191,8 @@ class CallManager {
     this.network = null
     this.channel = null
     this.roomMembers = null
+    this.screenCapture?.stop()
+    this.screenCapture = null
     for (const k of KINDS) {
       this.local[k]?.stop()
       this.local[k] = null
@@ -349,20 +354,46 @@ class CallManager {
 
   async startScreen(sourceId: string, audio: boolean, quality: ScreenQuality): Promise<ScreenChoice | null> {
     if (!this.network) return null
-    const choice = await api.selectScreenSource(sourceId, audio)
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
-      // O som do computador vai como é: os filtros de voz (eco, ruído, ganho
-      // automático) vêm ligados por padrão e estragam música e som de jogo.
-      audio: audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
-    })
-    this.local.screen?.stop()
+    // Começa a ouvir a posição da janela antes de pedir a captura, para não perder a primeira.
+    const follow = canCropWindows ? followWindow() : null
+    let choice: ScreenChoice
+    let stream: MediaStream
+    try {
+      choice = await api.selectScreenSource(sourceId, audio, canCropWindows)
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        // Recorte de janela: o monitor vem na resolução nativa e só a janela é reduzida
+        // depois, o que deixa o recorte mais nítido.
+        video: choice.crop
+          ? { frameRate: { max: quality.fps } }
+          : { width: { max: quality.width }, height: { max: quality.height }, frameRate: { max: quality.fps } },
+        // O som do computador vai como é: os filtros de voz (eco, ruído, ganho
+        // automático) vêm ligados por padrão e estragam música e som de jogo.
+        audio: audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
+      })
+    } catch (err) {
+      follow?.stop()
+      void api.stopWindowTracking()
+      throw err
+    }
+    this.screenCapture?.stop()
     this.local.screenAudio?.stop()
-    const video = stream.getVideoTracks()[0]
+    const raw = stream.getVideoTracks()[0]
+    let video = raw
+    if (choice.crop && follow) {
+      const capture = cropWindow(raw, follow, quality.width, quality.height, () => {
+        toast('A janela transmitida foi fechada.', 'error')
+        void this.stopScreen()
+      })
+      this.screenCapture = capture
+      video = capture.track
+    } else {
+      follow?.stop()
+      this.screenCapture = { stop: () => raw.stop() }
+    }
     // 60 fps: prioriza fluidez (jogos); 30 fps: prioriza nitidez (texto, código).
     video.contentHint = quality.fps >= 60 ? 'motion' : 'detail'
-    // 'ended' só dispara quando a fonte acaba sozinha (janela fechada, monitor desligado).
-    video.addEventListener('ended', () => {
+    // 'ended' só dispara quando a fonte acaba sozinha (monitor desligado, captura revogada).
+    raw.addEventListener('ended', () => {
       toast('A transmissão parou: a janela ou tela deixou de estar disponível.', 'error')
       void this.stopScreen()
     })
@@ -376,7 +407,8 @@ class CallManager {
 
   async stopScreen(): Promise<void> {
     if (!this.local.screen && !this.local.screenAudio) return
-    this.local.screen?.stop()
+    this.screenCapture?.stop()
+    this.screenCapture = null
     this.local.screenAudio?.stop()
     this.setLocal('screen', null)
     this.setLocal('screenAudio', null)

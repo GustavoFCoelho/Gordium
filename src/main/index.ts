@@ -3,13 +3,13 @@ import { statSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
-import type { ChannelKind, NewSound, RtcSignal, ScreenChoice, ScreenSource } from '../shared/types'
+import type { ChannelKind, NewSound, RtcSignal, ScreenChoice, ScreenSource, WindowTrack } from '../shared/types'
 import { Core } from './core'
 import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
 import { windowsFile } from './system'
 import { isProcessAdmin } from './vpn/wintun'
-import { windowPlacement } from './windows'
+import { physicalBounds, windowPlacement, windowTrack } from './windows'
 
 // GORDIUM_PROFILE=b permite rodar uma segunda instância (outro usuário) na mesma máquina.
 const profile = (process.env.GORDIUM_PROFILE ?? '').replace(/[^a-z0-9_-]/gi, '')
@@ -138,7 +138,9 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      sandbox: true
+      sandbox: true,
+      // Chamada e transmissão continuam a todo vapor com a janela minimizada.
+      backgroundThrottling: false
     }
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -179,6 +181,32 @@ function setupMedia(): void {
   })
 }
 
+let tracking: NodeJS.Timeout | null = null
+
+/** Manda à interface onde está a janela transmitida (10x por segundo, só quando muda). */
+function startWindowTracking(sourceId: string, monitor: { x: number; y: number; width: number; height: number }): void {
+  let last = ''
+  const tick = (): void => {
+    let track: WindowTrack
+    try {
+      track = windowTrack(sourceId, monitor)
+    } catch {
+      return
+    }
+    const json = JSON.stringify(track)
+    if (json === last) return
+    last = json
+    send('screen:window', track)
+  }
+  tick()
+  tracking = setInterval(tick, 100)
+}
+
+function stopWindowTracking(): void {
+  if (tracking) clearInterval(tracking)
+  tracking = null
+}
+
 function setupIpc(): void {
   ipcMain.handle('state:get', () => core.state())
   ipcMain.handle('chat:list', (_e, network: string) => core.messages(network))
@@ -213,30 +241,31 @@ function setupIpc(): void {
         name: s.name,
         thumbnail: s.thumbnail.toDataURL(),
         kind,
-        fullscreen: place?.fullscreen ?? false,
         screenId: place?.display ? (screenOfDisplay.get(String(place.display.id)) ?? null) : null
       }
     })
   })
-  ipcMain.handle('screen:select', (_e, id: string, audio: boolean): ScreenChoice => {
-    let source = screenSources.get(id)
+  ipcMain.handle('screen:select', (_e, id: string, audio: boolean, crop: boolean): ScreenChoice => {
+    const source = screenSources.get(id)
     if (!source) throw new Error('Essa tela ou janela não está mais disponível.')
-    let viaMonitor = false
-    if (source.id.startsWith('window:')) {
-      // Janela que ocupa o monitor inteiro (jogo em tela cheia): captura o monitor.
-      // É o método mais confiável no Windows: não depende da janela estar na frente,
-      // não some quando o jogo perde o foco e não desenha borda amarela.
+    stopWindowTracking()
+    if (source.id.startsWith('window:') && crop) {
+      // Captura própria de janela: captura o monitor em que ela está (o método mais
+      // confiável no Windows: não falha sem foco nem desenha borda amarela) e a
+      // interface recorta só a janela, seguindo a posição que mandamos daqui.
       const place = windowPlacement(source.id)
-      const displayId = place?.fullscreen && place.display ? String(place.display.id) : null
-      const monitor = displayId ? [...screenSources.values()].find((s) => s.display_id === displayId) : undefined
-      if (monitor) {
-        source = monitor
-        viaMonitor = true
-      }
+      if (!place?.display || place.minimized) throw new Error('A janela está minimizada. Abra-a antes de transmitir.')
+      const displayId = String(place.display.id)
+      const monitor = [...screenSources.values()].find((s) => s.display_id === displayId)
+      if (!monitor) throw new Error('Não encontrei o monitor dessa janela.')
+      pendingCapture = { source: monitor, audio: !!audio }
+      startWindowTracking(source.id, physicalBounds(place.display))
+      return { surface: 'window', name: source.name, crop: true }
     }
     pendingCapture = { source, audio: !!audio }
-    return { surface: source.id.startsWith('screen:') ? 'screen' : 'window', viaMonitor, name: source.name }
+    return { surface: source.id.startsWith('screen:') ? 'screen' : 'window', name: source.name, crop: false }
   })
+  ipcMain.handle('screen:stop-tracking', () => stopWindowTracking())
 
   ipcMain.handle('vpn:start', () => core.startVpn())
   ipcMain.handle('vpn:stop', () => core.stopVpn())

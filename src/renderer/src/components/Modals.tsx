@@ -581,10 +581,7 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
     setBusy(true)
     setNotice(null)
     try {
-      const choice = await call.startScreen(selected, audio, SCREEN_QUALITIES[quality])
-      if (choice?.viaMonitor && source) {
-        toast(`"${source.name}" está em tela cheia: transmitindo o monitor inteiro onde ela está.`)
-      }
+      await call.startScreen(selected, audio, SCREEN_QUALITIES[quality])
       onClose()
     } catch (err) {
       setBusy(false)
@@ -592,7 +589,9 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
       if (source?.kind === 'window' && source.screenId) {
         setKind('screen')
         setSelected(source.screenId)
-        setNotice(`Não deu para capturar só a janela "${source.name}". O monitor onde ela está já ficou selecionado: clique em Transmitir.`)
+        setNotice(
+          `Não deu para transmitir a janela "${source.name}" (${errorText(err)}). O monitor onde ela está já ficou selecionado, se quiser transmiti-lo.`
+        )
       } else {
         toast(`Não foi possível compartilhar: ${errorText(err)}`, 'error')
       }
@@ -616,19 +615,14 @@ export function ScreenPickerModal({ onClose }: { onClose(): void }) {
         {list.map((s) => (
           <button key={s.id} className={`source${selected === s.id ? ' selected' : ''}`} onClick={() => setSelected(s.id)} onDoubleClick={() => void start()}>
             <img src={s.thumbnail} alt="" />
-            {s.fullscreen && (
-              <span className="source-badge" title="Janela em tela cheia: o monitor inteiro dela é transmitido, o jeito mais confiável">
-                Tela cheia · transmite o monitor
-              </span>
-            )}
             <span className="ellipsis">{s.name}</span>
           </button>
         ))}
       </div>
       {kind === 'window' && !notice && (
         <p className="hint small">
-          Janelas minimizadas não aparecem aqui. Para jogos, a aba <b>Telas</b> é a mais confiável: o monitor continua sendo
-          transmitido mesmo quando o jogo perde o foco.
+          Só a janela escolhida é transmitida, mesmo quando ela perde o foco. O que ficar por cima dela aparece preto para quem
+          assiste, e se ela for minimizada a transmissão pausa. Janelas minimizadas não aparecem nesta lista.
         </p>
       )}
       {notice && <div className="picker-notice">{notice}</div>}

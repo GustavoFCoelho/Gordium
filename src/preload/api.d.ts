@@ -7,6 +7,7 @@ import type {
   ScreenChoice,
   ScreenSource,
   UpdateState,
+  WindowTrack,
   VoiceState
 } from '../shared/types'
 
@@ -39,7 +40,10 @@ export interface GordiumApi {
   onSignal(cb: (network: string, peer: string, signal: RtcSignal) => void): () => void
 
   getScreenSources(): Promise<ScreenSource[]>
-  selectScreenSource(id: string, audio: boolean): Promise<ScreenChoice>
+  /** crop: usar a captura própria de janela (monitor + recorte) quando a fonte for uma janela. */
+  selectScreenSource(id: string, audio: boolean, crop: boolean): Promise<ScreenChoice>
+  onWindowTrack(cb: (track: WindowTrack) => void): () => void
+  stopWindowTracking(): Promise<void>
 
   vpnStart(): Promise<void>
   vpnStop(): Promise<void>

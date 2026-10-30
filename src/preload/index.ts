@@ -37,7 +37,9 @@ const api: GordiumApi = {
   onSignal: (cb) => on('rtc', cb),
 
   getScreenSources: () => ipcRenderer.invoke('screen:sources'),
-  selectScreenSource: (id, audio) => ipcRenderer.invoke('screen:select', id, audio),
+  selectScreenSource: (id, audio, crop) => ipcRenderer.invoke('screen:select', id, audio, crop),
+  onWindowTrack: (cb) => on('screen:window', cb),
+  stopWindowTracking: () => ipcRenderer.invoke('screen:stop-tracking'),
 
   vpnStart: () => ipcRenderer.invoke('vpn:start'),
   vpnStop: () => ipcRenderer.invoke('vpn:stop'),

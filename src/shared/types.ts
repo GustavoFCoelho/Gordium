@@ -119,8 +119,6 @@ export interface ScreenSource {
   name: string
   thumbnail: string
   kind: 'screen' | 'window'
-  /** Janela que ocupa o monitor inteiro (jogo em tela cheia): é transmitida pelo monitor. */
-  fullscreen: boolean
   /** Fonte do monitor onde a janela está. */
   screenId: string | null
 }
@@ -128,9 +126,25 @@ export interface ScreenSource {
 /** O que vai ser transmitido depois de escolher uma fonte. */
 export interface ScreenChoice {
   surface: 'screen' | 'window'
-  /** A janela escolhida estava em tela cheia e virou captura do monitor dela. */
-  viaMonitor: boolean
   name: string
+  /**
+   * Captura própria de janela: o app captura o monitor em que ela está e recorta
+   * só a janela, seguindo a posição dela (ver WindowTrack).
+   */
+  crop: boolean
+}
+
+/** Onde está a janela transmitida, em pixels físicos do monitor capturado. */
+export interface WindowTrack {
+  state: 'visible' | 'minimized' | 'gone'
+  x: number
+  y: number
+  width: number
+  height: number
+  monitorWidth: number
+  monitorHeight: number
+  /** Partes da janela cobertas por outras janelas (relativas à janela): saem pretas. */
+  covered: { x: number; y: number; width: number; height: number }[]
 }
 
 /** unsupported = rodando fora do instalador (modo de desenvolvimento). */

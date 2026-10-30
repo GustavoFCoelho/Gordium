@@ -54,6 +54,12 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   registro assinado por quem fez; os membros trocam os registros ao se conectar e repassam os
   novos na hora, e em conflito vale a alteração mais recente. Os sons são comprimidos em Opus
   (até 6 s, ~70 KB) e cada um toca a própria cópia: tocar um som só manda um aviso pela rede.
+- **Captura própria de janela.** O Chromium captura janelas de outros programas de forma frágil
+  (falha sem foco, coberta ou minimizada) ou com a borda amarela do Windows 10. O Gordium captura
+  o monitor em que a janela está (DXGI, o método confiável) e recorta cada quadro só na área dela,
+  seguindo pela API do Windows a posição, o tamanho e as janelas por cima (que saem pretas, para
+  não vazar nada; overlays transparentes como o do NVIDIA são ignorados). Medido no Master Duel:
+  1080p a 57 fps.
 - **Mídia.** WebRTC em malha (cada participante se conecta aos outros), com sinalização pelo
   próprio canal P2P. Cada par de participantes tem 4 trilhas fixas (microfone, câmera, tela e
   áudio da tela): ligar a câmera ou a tela é só um `replaceTrack`, sem renegociar. Com a VPN
@@ -151,14 +157,11 @@ atualizações não têm assinatura digital.
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping
   dentro de `100.88.0.0/16`. Jogos e servidores precisam ser permitidos no firewall (o Windows
   costuma perguntar na primeira vez).
-- **Transmitir jogos.** Ao escolher uma janela que ocupa o monitor inteiro (jogo em tela cheia
-  ou sem borda), o app transmite o monitor dela, o método mais confiável no Windows: não falha
-  quando o jogo perde o foco nem quando outra janela passa por cima. Janelas minimizadas não
-  aparecem na lista de janelas (limitação do Windows/Chromium); para jogos, prefira a aba Telas.
-- **Janelas que aparecem pretas.** Para não aparecer a borda amarela que o Windows 10 desenha em
-  volta do que está sendo capturado, janelas são capturadas pelo método GDI (no Master Duel a
-  1080p: 55 fps, contra 32 fps do método moderno). Algumas janelas, como apps da Microsoft Store
-  e conteúdo protegido, podem sair pretas por esse método: nesse caso, compartilhe a tela inteira.
+- **Transmitir uma janela: o que fica por cima dela sai preto.** A captura de janela é própria
+  (veja "Como funciona"); se outra janela passar por cima da transmitida, aquela área aparece
+  preta para quem assiste, e janela minimizada pausa a transmissão. Janelas minimizadas não
+  aparecem na lista para escolher. Uma janela arrastada para outro monitor no meio da
+  transmissão sai do recorte: pare e transmita de novo.
 - **Áudio da tela em Windows antigo.** O som do computador é capturado sem o som do próprio
   Gordium (as vozes da chamada não voltam na transmissão), o que depende do Windows 10 versão 2004
   ou mais novo. Em versões anteriores, os outros podem ouvir eco da própria voz.
