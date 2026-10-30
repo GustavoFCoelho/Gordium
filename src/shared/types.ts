@@ -4,7 +4,13 @@
 export const VPN_SUBNET = '100.88.0.0'
 export const VPN_PREFIX = 16
 
+/** Canais que toda rede tem desde o início (podem ser renomeados, não excluídos). */
+export const DEFAULT_TEXT_CHANNEL = 'geral'
+export const DEFAULT_VOICE_CHANNEL = 'voz'
+
 export interface VoiceState {
+  /** Canal de voz em que a pessoa está. */
+  channel: string
   muted: boolean
   deafened: boolean
   camera: boolean
@@ -35,11 +41,46 @@ export interface NetworkInfo {
   /** Ainda anunciando a rede na DHT pela primeira vez. */
   discovering: boolean
   peers: PeerInfo[]
+  channels: ChannelInfo[]
+  sounds: SoundInfo[]
+}
+
+export type ChannelKind = 'text' | 'voice'
+
+export interface ChannelInfo {
+  id: string
+  kind: ChannelKind
+  name: string
+  createdAt: number
+  /** #geral e Sala de voz: existem em toda rede e não podem ser excluídos. */
+  builtin: boolean
+}
+
+/** Som do soundboard (o áudio em si é buscado à parte, só quando vai tocar). */
+export interface SoundInfo {
+  id: string
+  name: string
+  emoji: string
+  /** Segundos. */
+  duration: number
+  author: string
+  createdAt: number
+}
+
+/** Som pronto para guardar: áudio comprimido em base64. */
+export interface NewSound {
+  name: string
+  emoji: string
+  duration: number
+  mime: string
+  audio: string
 }
 
 export interface ChatMessage {
   id: string
   network: string
+  /** Canal de texto (mensagens antigas, sem canal, são do #geral). */
+  channel: string
   author: string
   name: string
   ts: number

@@ -1,6 +1,7 @@
 /**
- * Sons curtos da sala de voz, sintetizados na hora (sem arquivos de áudio):
- * duas notas subindo quando alguém entra, descendo quando alguém sai.
+ * Saída de áudio dos efeitos do app: sons curtos da sala de voz (sintetizados,
+ * duas notas subindo quando alguém entra, descendo quando alguém sai) e os sons
+ * do soundboard.
  */
 export type Cue = 'join' | 'leave'
 
@@ -15,7 +16,8 @@ const NOTE_LENGTH_S = 0.22
 let ctx: AudioContext | null = null
 let ctxSink = ''
 
-export function playCue(cue: Cue, sinkId = ''): void {
+/** Contexto de áudio compartilhado, tocando na saída escolhida nas configurações. */
+export function audioOut(sinkId = ''): AudioContext {
   ctx ??= new AudioContext()
   const ac = ctx
   if (sinkId !== ctxSink && 'setSinkId' in ac) {
@@ -23,6 +25,11 @@ export function playCue(cue: Cue, sinkId = ''): void {
     void (ac as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(sinkId).catch(() => {})
   }
   void ac.resume()
+  return ac
+}
+
+export function playCue(cue: Cue, sinkId = ''): void {
+  const ac = audioOut(sinkId)
   const t0 = ac.currentTime + 0.02
   NOTES[cue].forEach((freq, i) => {
     const start = t0 + i * NOTE_GAP_S

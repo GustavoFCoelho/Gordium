@@ -3,7 +3,11 @@
 Voz, vídeo, chat e uma **VPN estilo Hamachi** entre amigos, **sem servidor**. Cada rede existe só
 entre os computadores de quem participa: ninguém precisa hospedar nada.
 
-- **Sala de voz**: mute, ensurdecer, indicador de quem está falando e volume por pessoa.
+- **Canais**: quantos canais de texto e de voz a rede quiser (botão direito na lista de canais ou o
+  "+" ao lado de cada categoria). Cada canal de voz é uma sala separada.
+- **Sala de voz**: mute, ensurdecer, indicador de quem está falando, volume por pessoa e sons de
+  entrada/saída.
+- **Soundboard**: sons de até 6 s que qualquer membro adiciona e toca para todos da sala.
 - **Câmera e compartilhamento de tela**: tela inteira ou uma janela, de 720p30 a 1080p60, com
   áudio do computador opcional.
 - **Chat de texto**: mensagens assinadas por quem escreveu, histórico salvo em cada membro e
@@ -46,6 +50,10 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   (o próprio `Gordium.exe --vpn-helper`) que cuida só do adaptador. Os dois conversam por um
   *named pipe* de nome aleatório, autenticado por token; se o app fechar, o auxiliar remove o
   adaptador e sai. O auxiliar escolhe o DLL e valida IP e nome do adaptador por conta própria.
+- **Canais e soundboard sem servidor.** Criar, renomear ou excluir um canal ou som gera um
+  registro assinado por quem fez; os membros trocam os registros ao se conectar e repassam os
+  novos na hora, e em conflito vale a alteração mais recente. Os sons são comprimidos em Opus
+  (até 6 s, ~70 KB) e cada um toca a própria cópia: tocar um som só manda um aviso pela rede.
 - **Mídia.** WebRTC em malha (cada participante se conecta aos outros), com sinalização pelo
   próprio canal P2P. Cada par de participantes tem 4 trilhas fixas (microfone, câmera, tela e
   áudio da tela): ligar a câmera ou a tela é só um `replaceTrack`, sem renegociar. Com a VPN
@@ -111,6 +119,8 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 - **Tamanho dos grupos.** A mídia é em malha: cada pessoa envia uma cópia do vídeo para cada
   outra. Funciona bem até ~6–8 pessoas com vídeo e ~10–15 só com voz.
 - **Convite não é revogável.** O convite é a chave da rede. Para tirar alguém, crie uma rede nova.
+- **Sem cargos.** Não há dono da rede: qualquer membro pode criar, renomear e excluir canais e sons
+  do soundboard.
 - **VPN só no Windows e só IPv4.** O IP vem de um hash da identidade (65 mil endereços). Colisões
   são improváveis em grupos pequenos, mas não são tratadas.
 - **Firewall.** O Windows trata o adaptador do Gordium como rede pública. O app libera só o ping

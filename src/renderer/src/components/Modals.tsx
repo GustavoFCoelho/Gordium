@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { AppState, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
+import type { AppState, ChannelInfo, ChannelKind, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
 import { call, SCREEN_QUALITIES, useCall } from '../rtc/call'
+import { MAX_SOUND_SECONDS, prepareSound } from '../rtc/soundboard'
 import { toast, useUpdate } from '../store'
 import { copyText, errorText, formatBytes } from '../util'
-import { CloseIcon, CopyIcon, ShieldIcon } from './Icons'
+import { CloseIcon, CopyIcon, HashIcon, ShieldIcon, VolumeIcon } from './Icons'
 
 const api = window.gordium
 
@@ -130,6 +131,171 @@ export function InviteModal({ network, onClose }: { network: NetworkInfo; onClos
   )
 }
 
+// --- canais ---------------------------------------------------------------------
+
+export type ChannelModalMode = { type: 'create'; kind: ChannelKind } | { type: 'rename'; channel: ChannelInfo }
+
+export function ChannelModal({
+  network,
+  mode,
+  onClose,
+  onDone
+}: {
+  network: NetworkInfo
+  mode: ChannelModalMode
+  onClose(): void
+  onDone(id: string, kind: ChannelKind): void
+}) {
+  const [kind, setKind] = useState<ChannelKind>(mode.type === 'create' ? mode.kind : mode.channel.kind)
+  const [name, setName] = useState(mode.type === 'rename' ? mode.channel.name : '')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      if (mode.type === 'create') onDone(await api.createChannel(network.id, kind, name), kind)
+      else {
+        await api.renameChannel(network.id, mode.channel.id, name)
+        onDone(mode.channel.id, kind)
+      }
+    } catch (err) {
+      setError(errorText(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title={mode.type === 'create' ? 'Criar canal' : 'Renomear canal'} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit()
+        }}
+      >
+        {mode.type === 'create' && (
+          <div className="channel-kinds">
+            <button type="button" className={`channel-kind${kind === 'text' ? ' selected' : ''}`} onClick={() => setKind('text')}>
+              <HashIcon size={22} />
+              <span>
+                <b>Texto</b>
+                <small>Mensagens, links e conversas</small>
+              </span>
+            </button>
+            <button type="button" className={`channel-kind${kind === 'voice' ? ' selected' : ''}`} onClick={() => setKind('voice')}>
+              <VolumeIcon size={22} />
+              <span>
+                <b>Voz</b>
+                <small>Voz, vídeo, tela e soundboard</small>
+              </span>
+            </button>
+          </div>
+        )}
+        <label>
+          Nome do canal
+          <div className="channel-name-input">
+            {kind === 'text' ? <HashIcon size={16} /> : <VolumeIcon size={16} />}
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={kind === 'text' ? 'novo-canal' : 'Novo canal de voz'}
+              maxLength={32}
+            />
+          </div>
+        </label>
+        {error && <div className="form-error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="button secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" className="button" disabled={busy || !name.trim()}>
+            {mode.type === 'create' ? 'Criar canal' : 'Salvar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// --- soundboard -------------------------------------------------------------------
+
+const QUICK_EMOJIS = ['🔊', '😂', '👏', '🎉', '💀', '🔥', '😱', '🤡', '🐐', '💥', '🥁', '📢']
+
+export function AddSoundModal({ network, onClose }: { network: NetworkInfo; onClose(): void }) {
+  const [file, setFile] = useState<File | null>(null)
+  const [name, setName] = useState('')
+  const [emoji, setEmoji] = useState('🔊')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const pick = (f: File | null) => {
+    setFile(f)
+    setError(null)
+    if (f && !name) setName(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 24))
+  }
+
+  const submit = async () => {
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sound = await prepareSound(file, name.trim().slice(0, 24), emoji.trim())
+      await api.addSound(network.id, sound)
+      toast(`Som "${sound.name}" adicionado ao soundboard`)
+      onClose()
+    } catch (err) {
+      setError(errorText(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title="Adicionar som" onClose={onClose}>
+      <p className="hint">
+        O som fica disponível para todos da rede <b>{network.name}</b>. Até {MAX_SOUND_SECONDS} s: arquivos mais longos são
+        cortados. MP3, WAV, OGG e outros formatos comuns.
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit()
+        }}
+      >
+        <label>
+          Arquivo de áudio
+          <input type="file" accept="audio/*" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+        </label>
+        <label>
+          Nome
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do som" maxLength={24} />
+        </label>
+        <label>
+          Emoji
+          <div className="emoji-picks">
+            {QUICK_EMOJIS.map((e) => (
+              <button type="button" key={e} className={emoji === e ? 'selected' : ''} onClick={() => setEmoji(e)}>
+                {e}
+              </button>
+            ))}
+            <input className="emoji-input" value={emoji} onChange={(e) => setEmoji(e.target.value)} maxLength={8} />
+          </div>
+        </label>
+        {error && <div className="form-error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="button secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" className="button" disabled={busy || !file || !name.trim()}>
+            {busy ? 'Preparando o som…' : 'Adicionar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 export function ConfirmModal({
   title,
   text,
@@ -246,6 +412,17 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
           <label className="check">
             <input type="checkbox" checked={c.settings.sounds} onChange={(e) => setDevice({ sounds: e.target.checked })} />
             Sons de entrada e saída da sala
+          </label>
+          <label>
+            Volume do soundboard
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={c.settings.soundboardVolume}
+              onChange={(e) => setDevice({ soundboardVolume: Number(e.target.value) })}
+            />
           </label>
         </div>
       </section>

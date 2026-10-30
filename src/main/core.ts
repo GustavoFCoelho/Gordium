@@ -4,10 +4,34 @@ import { mkdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import * as hcrypto from 'hypercore-crypto'
-import type { AppState, ChatMessage, NetworkInfo, PeerInfo, RtcSignal, VoiceState } from '../shared/types'
+import {
+  DEFAULT_TEXT_CHANNEL,
+  DEFAULT_VOICE_CHANNEL,
+  type AppState,
+  type ChannelInfo,
+  type ChannelKind,
+  type ChatMessage,
+  type NetworkInfo,
+  type NewSound,
+  type PeerInfo,
+  type RtcSignal,
+  type SoundInfo,
+  type VoiceState
+} from '../shared/types'
 import { ChatStore, createMessage, verifyMessage } from './chat'
 import { cleanName, decodeInvite, encodeInvite, networkId, newNetworkKey, virtualIp, type NetworkSecret } from './network/crypto'
-import { NetworkSession, type Peer } from './network/session'
+import { cleanVoice, NetworkSession, type Peer } from './network/session'
+import {
+  cleanChannelName,
+  isRecordId,
+  MAX_SOUNDS,
+  RecordStore,
+  signRecord,
+  verifyRecord,
+  type ChannelData,
+  type NetRecord,
+  type SoundData
+} from './records'
 import { readJson, writeJsonAtomic } from './storage'
 import { VpnManager } from './vpn/manager'
 import type { TunnelOpener } from './vpn/tunnel'
@@ -47,13 +71,15 @@ export interface CoreEvents {
   changed: []
   chat: [network: string, messages: ChatMessage[]]
   rtc: [network: string, peer: string, signal: RtcSignal]
+  /** Alguém tocou um som do soundboard num canal de voz. */
+  sfx: [network: string, peer: string, sound: string, channel: string]
 }
 
-function cleanVoice(v: unknown): VoiceState | null {
-  if (!v || typeof v !== 'object') return null
-  const o = v as Record<string, unknown>
-  return { muted: !!o.muted, deafened: !!o.deafened, camera: !!o.camera, screen: !!o.screen }
-}
+/** Canais que toda rede tem; um registro com o mesmo id só os renomeia. */
+const BUILTIN_CHANNELS: ChannelInfo[] = [
+  { id: DEFAULT_TEXT_CHANNEL, kind: 'text', name: 'geral', createdAt: 0, builtin: true },
+  { id: DEFAULT_VOICE_CHANNEL, kind: 'voice', name: 'Sala de voz', createdAt: 0, builtin: true }
+]
 
 export class Core extends EventEmitter<CoreEvents> {
   readonly selfId: string
@@ -64,6 +90,7 @@ export class Core extends EventEmitter<CoreEvents> {
   private readonly keyPair: { publicKey: Buffer; secretKey: Buffer }
   private readonly networks = new Map<string, NetworkEntry>()
   private readonly chat: ChatStore
+  private readonly records: RecordStore
   private voice: { network: string; state: VoiceState } | null = null
   private saveTimer: NodeJS.Timeout | null = null
   private readonly settings: Settings
@@ -87,6 +114,7 @@ export class Core extends EventEmitter<CoreEvents> {
     this.vip = virtualIp(this.keyPair.publicKey)
 
     this.chat = new ChatStore(join(dataDir, 'chat'))
+    this.records = new RecordStore(join(dataDir, 'records'))
     this.settings = { vpnAutoStart: false, ...readJson<Partial<Settings>>(this.file('settings.json'), {}) }
     this.vpn = new VpnManager({ ip: this.vip, open: openTunnel })
     this.vpn.on('changed', () => this.emit('changed'))
@@ -132,6 +160,7 @@ export class Core extends EventEmitter<CoreEvents> {
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.save()
     this.chat.flush()
+    this.records.flush()
     await Promise.allSettled([...this.networks.values()].map((e) => e.session.stop()))
     await this.vpn.stop()
   }
@@ -169,8 +198,41 @@ export class Core extends EventEmitter<CoreEvents> {
       invite: encodeInvite(e.secret),
       joinedAt: e.joinedAt,
       discovering: e.session.discovering,
-      peers
+      peers,
+      channels: this.channels(e.session.id),
+      sounds: this.sounds(e.session.id)
     }
+  }
+
+  channels(network: string): ChannelInfo[] {
+    const list = BUILTIN_CHANNELS.map((c) => ({ ...c }))
+    for (const r of this.records.all(network)) {
+      if (r.kind !== 'channel') continue
+      const builtin = list.find((c) => c.id === r.id && c.builtin)
+      const data = r.data as ChannelData | null
+      if (builtin) {
+        if (data) builtin.name = data.name // canal padrão renomeado
+      } else if (data) {
+        list.push({ id: r.id, kind: data.kind, name: data.name, createdAt: data.createdAt, builtin: false })
+      }
+    }
+    return list.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  sounds(network: string): SoundInfo[] {
+    const list: SoundInfo[] = []
+    for (const r of this.records.all(network)) {
+      const d = r.data as SoundData | null
+      if (r.kind === 'sound' && d) {
+        list.push({ id: r.id, name: d.name, emoji: d.emoji, duration: d.duration, author: r.author, createdAt: d.createdAt })
+      }
+    }
+    return list.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  soundAudio(network: string, id: string): { mime: string; audio: string } | null {
+    const d = this.records.get(network, 'sound', id)?.data as SoundData | null | undefined
+    return d ? { mime: d.mime, audio: d.audio } : null
   }
 
   messages(network: string): ChatMessage[] {
@@ -206,6 +268,7 @@ export class Core extends EventEmitter<CoreEvents> {
     this.networks.delete(id)
     await entry.session.stop()
     this.chat.remove(id)
+    this.records.remove(id)
     this.save()
     this.emit('changed')
   }
@@ -230,15 +293,91 @@ export class Core extends EventEmitter<CoreEvents> {
     this.emit('changed')
   }
 
-  sendChat(network: string, text: string): ChatMessage | null {
+  sendChat(network: string, channel: string, text: string): ChatMessage | null {
     const entry = this.networks.get(network)
     const body = typeof text === 'string' ? text.trim() : ''
     if (!entry || !body) return null
-    const msg = createMessage(network, this.keyPair, this.identity.name, body)
+    const target = this.channels(network).find((c) => c.id === channel && c.kind === 'text')
+    if (!target) throw new Error('Esse canal não existe mais.')
+    const msg = createMessage(network, target.id, this.keyPair, this.identity.name, body)
     this.chat.add(network, [msg])
     entry.session.broadcast({ t: 'chat', msg })
     this.emit('chat', network, [msg])
     return msg
+  }
+
+  // --- canais e soundboard -------------------------------------------------------
+
+  createChannel(network: string, kind: ChannelKind, name: string): string {
+    if (kind !== 'text' && kind !== 'voice') throw new Error('Tipo de canal inválido.')
+    const clean = cleanChannelName(kind, name)
+    if (!clean) throw new Error('Dê um nome ao canal.')
+    const id = randomBytes(8).toString('hex')
+    this.publish(network, { kind: 'channel', id, rev: Date.now(), data: { kind, name: clean, createdAt: Date.now() } })
+    return id
+  }
+
+  renameChannel(network: string, id: string, name: string): void {
+    const current = this.channels(network).find((c) => c.id === id)
+    if (!current) throw new Error('Esse canal não existe mais.')
+    const clean = cleanChannelName(current.kind, name)
+    if (!clean) throw new Error('Dê um nome ao canal.')
+    this.publish(network, { kind: 'channel', id, rev: this.nextRev(network, 'channel', id), data: { kind: current.kind, name: clean, createdAt: current.createdAt } })
+  }
+
+  deleteChannel(network: string, id: string): void {
+    if (id === DEFAULT_TEXT_CHANNEL || id === DEFAULT_VOICE_CHANNEL) throw new Error('Os canais padrão não podem ser excluídos.')
+    if (!isRecordId(id)) return
+    this.publish(network, { kind: 'channel', id, rev: this.nextRev(network, 'channel', id), data: null })
+  }
+
+  addSound(network: string, sound: NewSound): string {
+    if (this.sounds(network).length >= MAX_SOUNDS) throw new Error(`O soundboard já tem o máximo de ${MAX_SOUNDS} sons.`)
+    const id = randomBytes(8).toString('hex')
+    const name = cleanName(sound?.name).slice(0, 24)
+    if (!name) throw new Error('Dê um nome ao som.')
+    const data: SoundData = {
+      name,
+      emoji: typeof sound.emoji === 'string' ? sound.emoji.trim().slice(0, 16) : '',
+      duration: Number(sound.duration),
+      mime: String(sound.mime),
+      audio: String(sound.audio),
+      createdAt: Date.now()
+    }
+    // Mesma validação aplicada ao que chega dos outros: o que sai daqui também tem que passar.
+    const rec = signRecord(network, { kind: 'sound', id, rev: Date.now(), data }, this.keyPair)
+    if (!verifyRecord(rec, network)) throw new Error('Som inválido: precisa ter até 6 s e no máximo ~200 KB.')
+    this.publishSigned(network, rec)
+    return id
+  }
+
+  deleteSound(network: string, id: string): void {
+    if (!isRecordId(id)) return
+    this.publish(network, { kind: 'sound', id, rev: this.nextRev(network, 'sound', id), data: null })
+  }
+
+  /** Avisa quem está no canal de voz para tocar o som (cada um toca a sua cópia). */
+  playSound(network: string, channel: string, id: string): void {
+    const entry = this.networks.get(network)
+    if (!entry || !this.soundAudio(network, id) || !isRecordId(channel)) return
+    entry.session.broadcast({ t: 'sfx', id, channel })
+  }
+
+  private nextRev(network: string, kind: NetRecord['kind'], id: string): number {
+    return Math.max(Date.now(), (this.records.get(network, kind, id)?.rev ?? 0) + 1)
+  }
+
+  private publish(network: string, record: Omit<NetRecord, 'sig' | 'author'>): void {
+    this.publishSigned(network, signRecord(network, record, this.keyPair))
+  }
+
+  private publishSigned(network: string, rec: NetRecord): void {
+    const entry = this.networks.get(network)
+    if (!entry) throw new Error('Rede não encontrada.')
+    if (this.records.apply(network, rec)) {
+      entry.session.broadcast({ t: 'rec', rec })
+      this.emit('changed')
+    }
   }
 
   sendRtc(network: string, peer: string, signal: RtcSignal): void {
@@ -291,6 +430,7 @@ export class Core extends EventEmitter<CoreEvents> {
       session.rememberPeer(peer.transport)
       this.vpn.addRoute(peer.vip, this.routeKey(net, peer), (packet) => session.sendPacket(peer.id, packet))
       session.send(peer.id, { t: 'sync-req', have: this.chat.recentIds(net) })
+      session.send(peer.id, { t: 'rec-sum', items: this.records.summary(net) })
       this.emit('changed')
     })
     session.on('peer-down', (peer) => {
@@ -320,6 +460,24 @@ export class Core extends EventEmitter<CoreEvents> {
       if (data && typeof data === 'object' && typeof (data as RtcSignal).cid === 'string') {
         this.emit('rtc', net, peer.id, data as RtcSignal)
       }
+    })
+
+    // Registros (canais, sons): ao conectar cada lado manda o resumo; o outro
+    // responde com o que for mais novo. Um registro por frame (sons são grandes).
+    session.on('rec-sum', (peer, items) => {
+      if (!Array.isArray(items)) return
+      const theirs = new Map<string, number>()
+      for (const it of items) {
+        if (Array.isArray(it) && typeof it[0] === 'string' && typeof it[1] === 'number') theirs.set(it[0], it[1])
+      }
+      for (const rec of this.records.newerThan(net, theirs)) session.send(peer.id, { t: 'rec', rec })
+    })
+    session.on('rec', (_peer, raw) => {
+      const rec = verifyRecord(raw, net)
+      if (rec && this.records.apply(net, rec)) this.emit('changed')
+    })
+    session.on('sfx', (peer, id, channel) => {
+      if (isRecordId(id) && isRecordId(channel) && this.soundAudio(net, id)) this.emit('sfx', net, peer.id, id, channel)
     })
   }
 

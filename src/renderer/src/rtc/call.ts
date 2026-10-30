@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
 import { toast } from '../store'
+import { playSoundboard } from './soundboard'
 import { playCue, type Cue } from './sounds'
 
 const api = window.gordium
@@ -50,7 +51,12 @@ export interface DeviceSettings {
   noiseSuppression: boolean
   /** Sons quando alguém entra ou sai da sala de voz. */
   sounds: boolean
+  /** Volume do soundboard, 0–1. */
+  soundboardVolume: number
 }
+
+/** Um som do soundboard por pessoa a cada tanto, para ninguém metralhar a sala. */
+const SOUNDBOARD_COOLDOWN_MS = 800
 
 interface Link {
   peer: string
@@ -82,6 +88,8 @@ function loadJson<T>(key: string, fallback: T): T {
 
 class CallManager {
   network: string | null = null
+  /** Canal de voz em que estou (dentro de `network`). */
+  channel: string | null = null
   selfId = ''
   muted = false
   deafened = false
@@ -93,7 +101,8 @@ class CallManager {
     camId: '',
     outputId: '',
     noiseSuppression: true,
-    sounds: true
+    sounds: true,
+    soundboardVolume: 0.6
   })
 
   private volumes: Record<string, number> = loadJson('gordium.volumes', {})
@@ -108,8 +117,13 @@ class CallManager {
   /** Quem está na sala (fora eu), para os sons de entrada/saída; null = ainda não sabe. */
   private roomMembers: Set<string> | null = null
 
+  private lastSfx = new Map<string, number>()
+
   constructor() {
     api.onSignal((network, peer, signal) => this.onSignal(network, peer, signal))
+    api.onSfx((network, peer, sound, channel) => {
+      if (network === this.network && channel === this.channel && this.allowSfx(peer)) this.playSfx(sound)
+    })
   }
 
   // --- integração com React -----------------------------------------------
@@ -142,9 +156,10 @@ class CallManager {
 
   // --- entrar / sair ---------------------------------------------------------
 
-  async join(network: string, selfId: string): Promise<void> {
-    if (this.network === network) return
+  async join(network: string, channel: string, selfId: string): Promise<void> {
+    if (this.network === network && this.channel === channel) return
     if (this.network) await this.leave()
+    this.channel = channel
     this.selfId = selfId
     this.error = null
     this.peers = [] // chegam no próximo syncState, já desta rede
@@ -171,6 +186,7 @@ class CallManager {
     for (const link of [...this.links.values()]) this.closeLink(link, true)
     this.cue('leave')
     this.network = null
+    this.channel = null
     this.roomMembers = null
     for (const k of KINDS) {
       this.local[k]?.stop()
@@ -190,7 +206,8 @@ class CallManager {
   syncState(state: AppState): void {
     if (!this.network) return
     const net = state.networks.find((n) => n.id === this.network)
-    if (!net) {
+    // Rede abandonada ou canal de voz excluído: sai da chamada.
+    if (!net || !net.channels.some((c) => c.id === this.channel && c.kind === 'voice')) {
       void this.leave()
       return
     }
@@ -201,12 +218,44 @@ class CallManager {
 
   /** Som quando alguém entra ou sai da sala em que eu estou (cair da conexão conta como sair). */
   private roomSounds(): void {
-    const now = new Set(this.peers.filter((p) => p.online && p.voice).map((p) => p.id))
+    const now = new Set(this.roomPeers().map((p) => p.id))
     const before = this.roomMembers
     this.roomMembers = now
     if (!before) return // primeira visão da sala: quem já estava não "entrou"
     if ([...now].some((id) => !before.has(id))) this.cue('join')
     else if ([...before].some((id) => !now.has(id))) this.cue('leave')
+  }
+
+  /** Quem está na mesma sala de voz que eu. */
+  private roomPeers(): PeerInfo[] {
+    return this.peers.filter((p) => p.online && p.voice?.channel === this.channel)
+  }
+
+  // --- soundboard --------------------------------------------------------------
+
+  /** Toca um som para todo mundo da sala (cada um toca a própria cópia). */
+  async playSound(id: string): Promise<void> {
+    if (!this.network || !this.channel) throw new Error('Entre numa sala de voz para tocar sons.')
+    if (!this.allowSfx(this.selfId)) return
+    await api.playSound(this.network, this.channel, id)
+    this.playSfx(id)
+  }
+
+  /** Ouvir só para mim, sem tocar na sala. */
+  previewSound(network: string, id: string): void {
+    void playSoundboard(network, id, this.settings.soundboardVolume, this.settings.outputId).catch(() => {})
+  }
+
+  private allowSfx(who: string): boolean {
+    const now = Date.now()
+    if (now - (this.lastSfx.get(who) ?? 0) < SOUNDBOARD_COOLDOWN_MS) return false
+    this.lastSfx.set(who, now)
+    return true
+  }
+
+  private playSfx(id: string): void {
+    if (this.deafened || !this.network) return
+    void playSoundboard(this.network, id, this.settings.soundboardVolume, this.settings.outputId).catch(() => {})
   }
 
   private cue(cue: Cue): void {
@@ -215,7 +264,7 @@ class CallManager {
 
   private syncLinks(): void {
     if (!this.network) return
-    const inVoice = new Set(this.peers.filter((p) => p.online && p.voice).map((p) => p.id))
+    const inVoice = new Set(this.roomPeers().map((p) => p.id))
     for (const link of [...this.links.values()]) {
       if (!inVoice.has(link.peer)) this.closeLink(link, false)
     }
@@ -384,6 +433,7 @@ class CallManager {
   private async publish(): Promise<void> {
     if (!this.network) return
     await api.setVoice(this.network, {
+      channel: this.channel ?? '',
       muted: this.muted || this.deafened || !this.local.mic,
       deafened: this.deafened,
       camera: !!this.local.camera,

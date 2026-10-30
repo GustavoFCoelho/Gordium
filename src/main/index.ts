@@ -3,7 +3,7 @@ import { statSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
-import type { RtcSignal, ScreenChoice, ScreenSource } from '../shared/types'
+import type { ChannelKind, NewSound, RtcSignal, ScreenChoice, ScreenSource } from '../shared/types'
 import { Core } from './core'
 import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
@@ -59,6 +59,7 @@ function startApp(): void {
     core.on('changed', pushState)
     core.on('chat', (network, messages) => send('chat', network, messages))
     core.on('rtc', (network, peer, signal) => send('rtc', network, peer, signal))
+    core.on('sfx', (network, peer, sound, channel) => send('sfx', network, peer, sound, channel))
     updater = new Updater()
     updater.on('changed', () => send('update', updater.state))
 
@@ -176,7 +177,14 @@ function setupMedia(): void {
 function setupIpc(): void {
   ipcMain.handle('state:get', () => core.state())
   ipcMain.handle('chat:list', (_e, network: string) => core.messages(network))
-  ipcMain.handle('chat:send', (_e, network: string, text: string) => core.sendChat(network, text))
+  ipcMain.handle('chat:send', (_e, network: string, channel: string, text: string) => core.sendChat(network, channel, text))
+  ipcMain.handle('channel:create', (_e, network: string, kind: ChannelKind, name: string) => core.createChannel(network, kind, name))
+  ipcMain.handle('channel:rename', (_e, network: string, id: string, name: string) => core.renameChannel(network, id, name))
+  ipcMain.handle('channel:delete', (_e, network: string, id: string) => core.deleteChannel(network, id))
+  ipcMain.handle('sound:add', (_e, network: string, sound: NewSound) => core.addSound(network, sound))
+  ipcMain.handle('sound:delete', (_e, network: string, id: string) => core.deleteSound(network, id))
+  ipcMain.handle('sound:audio', (_e, network: string, id: string) => core.soundAudio(network, id))
+  ipcMain.handle('sound:play', (_e, network: string, channel: string, id: string) => core.playSound(network, channel, id))
   ipcMain.handle('net:create', (_e, name: string) => core.createNetwork(name))
   ipcMain.handle('net:join', (_e, invite: string) => core.joinNetwork(invite))
   ipcMain.handle('net:leave', (_e, id: string) => core.leaveNetwork(id))

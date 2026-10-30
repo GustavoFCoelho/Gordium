@@ -332,12 +332,34 @@ a {
 }
 
 .channel-group {
-  padding: 16px 8px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 4px 4px 8px;
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
   letter-spacing: 0.02em;
+}
+
+.group-add {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.channels:hover .group-add {
+  opacity: 1;
+}
+
+.group-add:hover {
+  color: var(--text-strong);
 }
 
 .channel {
@@ -1435,4 +1457,222 @@ label select {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* --- menu do botão direito ----------------------------------------------------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 6px;
+  background: #111214;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: fade 0.08s ease-out;
+}
+
+.context-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.context-menu button.danger {
+  color: #f23f43;
+}
+
+.context-menu button.danger:hover {
+  background: var(--red);
+  color: white;
+}
+
+.context-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--bg-active);
+}
+
+/* --- criar canal -------------------------------------------------------------- */
+
+.channel-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.channel-kind {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-side);
+  border: 2px solid transparent;
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.channel-kind span {
+  display: flex;
+  flex-direction: column;
+}
+
+.channel-kind b {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.channel-kind small {
+  font-size: 13px;
+}
+
+.channel-kind.selected {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.channel-name-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  border-radius: 4px;
+  background: var(--bg-rail);
+  color: var(--text-muted);
+  text-transform: none;
+}
+
+.channel-name-input input {
+  background: transparent;
+  padding-left: 0;
+}
+
+/* --- soundboard --------------------------------------------------------------- */
+
+.soundboard {
+  position: fixed;
+  z-index: 150;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 14px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-modal);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  animation: pop 0.12s ease-out;
+}
+
+.soundboard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--text-strong);
+}
+
+.soundboard-title {
+  font-weight: 700;
+}
+
+.soundboard-head .hint {
+  flex: 1;
+  margin: 0;
+}
+
+.soundboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.sound {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg-side);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+}
+
+.sound:hover {
+  background: var(--bg-active);
+}
+
+.sound:active {
+  transform: scale(0.97);
+}
+
+.sound-emoji {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.sound.add {
+  justify-content: center;
+  color: var(--green);
+  border: 1px dashed #4e5058;
+  background: transparent;
+}
+
+.soundboard-volume {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.soundboard-volume input {
+  flex: 1;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.emoji-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  text-transform: none;
+}
+
+.emoji-picks button {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 18px;
+  background: var(--bg-side);
+}
+
+.emoji-picks button.selected {
+  outline: 2px solid var(--accent);
+}
+
+.emoji-input {
+  width: 64px !important;
+  height: 34px;
+  text-align: center;
+  font-size: 16px !important;
 }

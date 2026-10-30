@@ -1,5 +1,5 @@
-import { Fragment, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { ChatMessage, NetworkInfo } from '../../../shared/types'
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import type { ChannelInfo, ChatMessage, NetworkInfo } from '../../../shared/types'
 import { toast, useMessages } from '../store'
 import { errorText, formatDay, formatTime } from '../util'
 import { Avatar } from './Avatar'
@@ -24,8 +24,9 @@ function sameDay(a: number, b: number): boolean {
   return new Date(a).toDateString() === new Date(b).toDateString()
 }
 
-export function ChatView({ network }: { network: NetworkInfo }) {
-  const messages = useMessages(network.id)
+export function ChatView({ network, channel }: { network: NetworkInfo; channel: ChannelInfo }) {
+  const all = useMessages(network.id)
+  const messages = useMemo(() => all.filter((m) => m.channel === channel.id), [all, channel.id])
   const [text, setText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -33,18 +34,18 @@ export function ChatView({ network }: { network: NetworkInfo }) {
   useLayoutEffect(() => {
     const el = listRef.current
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
-  }, [messages, network.id])
+  }, [messages, network.id, channel.id])
 
   useLayoutEffect(() => {
     stickToBottom.current = true
-  }, [network.id])
+  }, [network.id, channel.id])
 
   const send = () => {
     const body = text.trim()
     if (!body) return
     setText('')
     stickToBottom.current = true
-    window.gordium.sendChat(network.id, body).catch((err) => toast(errorText(err), 'error'))
+    window.gordium.sendChat(network.id, channel.id, body).catch((err) => toast(errorText(err), 'error'))
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -68,9 +69,9 @@ export function ChatView({ network }: { network: NetworkInfo }) {
           <div className="chat-intro-icon">
             <HashIcon size={36} />
           </div>
-          <h2>Bem-vindo a #geral</h2>
+          <h2>Bem-vindo a #{channel.name}</h2>
           <p>
-            Este é o começo da rede <b>{network.name}</b>. As mensagens vão direto de computador para computador,
+            Este é o começo do canal <b>#{channel.name}</b> na rede <b>{network.name}</b>. As mensagens vão direto de computador para computador,
             assinadas por quem escreveu, e ficam salvas só nos computadores dos membros.
           </p>
         </div>
@@ -111,7 +112,7 @@ export function ChatView({ network }: { network: NetworkInfo }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={`Conversar em #geral`}
+          placeholder={`Conversar em #${channel.name}`}
           rows={Math.min(8, text.split('\n').length)}
           maxLength={4000}
         />

@@ -11,7 +11,8 @@ import {
   PhoneOffIcon,
   ScreenIcon,
   VideoIcon,
-  VideoOffIcon
+  VideoOffIcon,
+  MusicIcon
 } from './Icons'
 import { toggleCamera } from './Sidebar'
 
@@ -89,14 +90,32 @@ function TileView({ tile, focused, onFocus }: { tile: Tile; focused: boolean; on
   )
 }
 
-export function CallView({ state, network, onScreen }: { state: AppState; network: NetworkInfo; onScreen(): void }) {
+export function CallView({
+  state,
+  network,
+  onScreen,
+  onSoundboard
+}: {
+  state: AppState
+  network: NetworkInfo
+  onScreen(): void
+  onSoundboard(): void
+}) {
   const c = useCall()
   const [focus, setFocus] = useState<string | null>(null)
 
-  const selfVoice: VoiceState = { muted: c.muted || !c.local.mic, deafened: c.deafened, camera: !!c.local.camera, screen: !!c.local.screen }
+  const selfVoice: VoiceState = {
+    channel: c.channel ?? '',
+    muted: c.muted || !c.local.mic,
+    deafened: c.deafened,
+    camera: !!c.local.camera,
+    screen: !!c.local.screen
+  }
   const people = [
     { id: state.self.id, name: state.self.name, voice: selfVoice, self: true },
-    ...network.peers.filter((p) => p.online && p.voice).map((p) => ({ id: p.id, name: p.name, voice: p.voice, self: false }))
+    ...network.peers
+      .filter((p) => p.online && p.voice?.channel === c.channel)
+      .map((p) => ({ id: p.id, name: p.name, voice: p.voice, self: false }))
   ]
 
   const tiles: Tile[] = []
@@ -167,6 +186,9 @@ export function CallView({ state, network, onScreen }: { state: AppState; networ
           title={c.local.screen ? 'Parar transmissão' : 'Compartilhar tela'}
         >
           <ScreenIcon />
+        </button>
+        <button className="round-button" onClick={onSoundboard} title="Soundboard">
+          <MusicIcon />
         </button>
         <button className="round-button hangup" onClick={() => void c.leave()} title="Desconectar">
           <PhoneOffIcon />

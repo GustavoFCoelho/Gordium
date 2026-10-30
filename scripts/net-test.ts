@@ -6,6 +6,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { verifyMessage } from '../src/main/chat'
 import { Core } from '../src/main/core'
 
 const dirs: string[] = []
@@ -40,7 +41,7 @@ async function main() {
   const invite = a.state().networks[0].invite
   console.log('convite:', invite)
   // histórico antes de B entrar, para testar a sincronização
-  a.sendChat(net, 'mensagem antiga')
+  a.sendChat(net, 'geral', 'mensagem antiga')
   if (b.joinNetwork(invite) !== net) throw new Error('id de rede diferente')
 
   const online = (c: Core, id: string) => !!c.state().networks[0]?.peers.find((p) => p.id === id && p.online)
@@ -51,11 +52,54 @@ async function main() {
   const gotB: string[] = []
   b.on('chat', (_n, msgs) => gotB.push(...msgs.map((m) => m.text)))
   await until('sincronização do histórico', () => b.messages(net).some((m) => m.text === 'mensagem antiga'))
-  a.sendChat(net, 'olá do A 👋')
+  a.sendChat(net, 'geral', 'olá do A 👋')
   await until('chat ao vivo A→B', () => gotB.includes('olá do A 👋'))
 
-  b.setVoice(net, { muted: true, deafened: false, camera: false, screen: true })
-  await until('estado de voz B→A', () => a.state().networks[0].peers[0].voice?.screen === true)
+  b.setVoice(net, { channel: 'voz', muted: true, deafened: false, camera: false, screen: true })
+  await until('estado de voz B→A (com o canal)', () => {
+    const v = a.state().networks[0].peers[0].voice
+    return v?.screen === true && v.channel === 'voz'
+  })
+
+  // mensagem do #geral sem o campo "channel" (como manda uma versão antiga) continua válida
+  const legacy: Record<string, unknown> = { ...a.messages(net)[0] }
+  delete legacy.channel
+  if (verifyMessage(legacy, net)?.channel !== 'geral') throw new Error('mensagem antiga do #geral recusada')
+  console.log('  ok: mensagens do #geral compatíveis com a versão anterior')
+
+  // canais e soundboard: registros assinados que a rede inteira compartilha
+  const jogos = a.createChannel(net, 'text', 'Jogos de Hoje')
+  await until('canal de texto criado por A aparece em B', () => b.channels(net).some((ch) => ch.id === jogos && ch.name === 'jogos-de-hoje'))
+  b.sendChat(net, jogos, 'partida às 21h')
+  await until('mensagem do canal novo chega no canal certo', () => a.messages(net).some((m) => m.channel === jogos && m.text === 'partida às 21h'))
+  const duelo = b.createChannel(net, 'voice', 'Duelo')
+  await until('canal de voz criado por B aparece em A', () => a.channels(net).some((ch) => ch.id === duelo && ch.kind === 'voice'))
+  b.renameChannel(net, jogos, 'jogatina')
+  await until('renomear canal propaga', () => a.channels(net).find((ch) => ch.id === jogos)?.name === 'jogatina')
+  a.deleteChannel(net, duelo)
+  await until('excluir canal propaga', () => !b.channels(net).some((ch) => ch.id === duelo))
+
+  const fakeAudio = Buffer.alloc(3000, 1).toString('base64')
+  const som = a.addSound(net, { name: 'Buzina', emoji: '📢', duration: 1.2, mime: 'audio/webm', audio: fakeAudio })
+  await until('som do soundboard chega em B', () => b.sounds(net).some((x) => x.id === som) && b.soundAudio(net, som)?.audio === fakeAudio)
+  let sfx: unknown[] = []
+  b.on('sfx', (_n, peer, sound, channel) => (sfx = [peer, sound, channel]))
+  a.playSound(net, 'voz', som)
+  await until('tocar som avisa B', () => sfx[0] === a.selfId && sfx[1] === som && sfx[2] === 'voz')
+
+  const rec = (a as any).records.get(net, 'channel', jogos)
+  ;(b as any).networks.get(net).session.emit('rec', {}, { ...rec, rev: rec.rev + 1, data: { ...rec.data, name: 'hackeado' } })
+  await wait(300)
+  if (b.channels(net).find((ch) => ch.id === jogos)?.name !== 'jogatina') throw new Error('aceitou registro adulterado')
+  console.log('  ok: registro de canal adulterado rejeitado')
+  let rejected = false
+  try {
+    a.addSound(net, { name: 'Grande', emoji: '', duration: 2, mime: 'audio/webm', audio: Buffer.alloc(260_000).toString('base64') })
+  } catch {
+    rejected = true
+  }
+  if (!rejected) throw new Error('aceitou som grande demais')
+  console.log('  ok: som acima do limite recusado')
 
   let sig: unknown = null
   b.on('rtc', (_n, peer, s) => { if (peer === a.selfId) sig = s })
@@ -84,7 +128,12 @@ async function main() {
   // terceiro membro entra depois e recebe tudo
   const c = mkCore('c'); c.setName('Carla')
   c.joinNetwork(invite)
-  await until('C recebe histórico completo', () => c.messages(net).length === 2)
+  await until('C recebe histórico completo', () => c.messages(net).length === 3)
+  await until('C recebe canais e sons ao entrar', () =>
+    c.channels(net).some((ch) => ch.id === jogos && ch.name === 'jogatina') &&
+    !c.channels(net).some((ch) => ch.id === duelo) &&
+    c.sounds(net).some((x) => x.id === som)
+  )
   b.setName('Bruno Renomeado')
   await until('renomear propaga', () => a.state().networks[0].peers.some((p) => p.name === 'Bruno Renomeado'))
 

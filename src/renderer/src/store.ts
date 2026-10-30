@@ -32,9 +32,12 @@ export function useAppState(): AppState | null {
 
 const EMPTY: ChatMessage[] = []
 const messages = new Map<string, ChatMessage[]>()
+/** Não lidas por "rede:canal". */
 const unread = new Map<string, number>()
 const chatListeners = new Set<() => void>()
+/** "rede:canal" aberto agora (não conta como não lida). */
 let reading: string | null = null
+const unreadKey = (network: string, channel: string): string => `${network}:${channel}`
 let chatVersion = 0
 
 function notifyChat(): void {
@@ -53,23 +56,29 @@ api.onChat((network, incoming) => {
   const list = messages.get(network)
   if (list) messages.set(network, merge(list, incoming))
   const selfId = state?.self.id
-  const others = incoming.filter((m) => m.author !== selfId).length
-  if (others > 0 && network !== reading) unread.set(network, (unread.get(network) ?? 0) + others)
+  for (const m of incoming) {
+    const key = unreadKey(network, m.channel)
+    if (m.author !== selfId && key !== reading) unread.set(key, (unread.get(key) ?? 0) + 1)
+  }
   notifyChat()
 })
 
-/** Qual rede está com o chat aberto (zera e para de contar as não lidas). */
-export function setReading(network: string | null): void {
-  reading = network
-  if (network && unread.get(network)) {
-    unread.delete(network)
+/** Qual canal de texto está aberto (zera e para de contar as não lidas dele). */
+export function setReading(network: string | null, channel: string | null): void {
+  reading = network && channel ? unreadKey(network, channel) : null
+  if (reading && unread.get(reading)) {
+    unread.delete(reading)
     notifyChat()
   }
 }
 
-export function useUnread(network: string): number {
+/** Não lidas de um canal, ou da rede inteira se o canal não for dado. */
+export function useUnread(network: string, channel?: string): number {
   useSyncExternalStore(subscribeChat, () => chatVersion)
-  return unread.get(network) ?? 0
+  if (channel) return unread.get(unreadKey(network, channel)) ?? 0
+  let total = 0
+  for (const [key, n] of unread) if (key.startsWith(`${network}:`)) total += n
+  return total
 }
 
 function subscribeChat(l: () => void): () => void {

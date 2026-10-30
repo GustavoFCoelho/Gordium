@@ -64,6 +64,13 @@ async function connect(name, port) {
   }
   return {
     evaluate,
+    /** Escolhe um arquivo num <input type=file>, como o diálogo do Windows faria. */
+    setFile: async (selector, path) => {
+      const doc = await send('DOM.getDocument', { depth: -1 })
+      const found = await send('DOM.querySelector', { nodeId: doc.result.root.nodeId, selector })
+      if (!found.result?.nodeId) throw new Error(`não achei ${selector}`)
+      await send('DOM.setFileInputFiles', { nodeId: found.result.nodeId, files: [path] })
+    },
     shot: async (file) => {
       const res = await send('Page.captureScreenshot', { format: 'png' })
       writeFileSync(join(SHOTS, `${file}.png`), Buffer.from(res.result.data, 'base64'))
@@ -108,6 +115,48 @@ const hasText = (selector, text) => `[...document.querySelectorAll(${JSON.string
 
 // --- roteiro ------------------------------------------------------------------
 
+/** Clique com o botão direito no elemento (abre o menu de contexto do app). */
+const rightClick = (selector, text) =>
+  `(() => { const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => ${text ? `e.textContent.includes(${JSON.stringify(text)})` : 'true'}); if (!el) throw new Error('não achei ' + ${JSON.stringify(`${selector} ${text ?? ''}`)}); const r = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 10, clientY: r.bottom - 5 })); return true })()`
+
+/** Escuta os sons do soundboard tocados (duração de cada um, em segundos). */
+const listenSoundboard = `(() => {
+  window.__sfx = []
+  const start = AudioBufferSourceNode.prototype.start
+  AudioBufferSourceNode.prototype.start = function (...args) {
+    window.__sfx.push(this.buffer?.duration ?? 0)
+    return start.apply(this, args)
+  }
+  return true
+})()`
+
+/** WAV de 1 s (lá 440 Hz) para adicionar ao soundboard pela interface. */
+function writeBeep(path) {
+  const rate = 48000
+  const n = rate
+  const buf = Buffer.alloc(44 + n * 2)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + n * 2, 4)
+  buf.write('WAVEfmt ', 8)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)
+  buf.writeUInt16LE(1, 22)
+  buf.writeUInt32LE(rate, 24)
+  buf.writeUInt32LE(rate * 2, 28)
+  buf.writeUInt16LE(2, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(n * 2, 40)
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 12000), 44 + i * 2)
+  writeFileSync(path, buf)
+}
+const BEEP = join(SHOTS, 'buzina.wav')
+writeBeep(BEEP)
+
+/** Quantas pessoas aparecem embaixo de um canal de voz na barra lateral. */
+const usersInVoice = (name) =>
+  `([...document.querySelectorAll('.channels > div')].find(d => d.querySelector('.channel')?.textContent.includes(${JSON.stringify(name)}))?.querySelectorAll('.voice-user').length ?? -1)`
+
 const procs = [launch('e2ea', 9301), launch('e2eb', 9302)]
 let A, B
 try {
@@ -142,17 +191,56 @@ try {
   await A.until('Alice recebe a resposta', hasText('.msg-text', 'sala de voz'))
   await A.shot('03-chat')
 
+  // canais criados pelo botão direito
+  await A.evaluate(rightClick('.channels'))
+  await A.evaluate(click('.context-menu button', 'Criar canal de texto'))
+  await A.until('modal de canal aberto pelo botão direito', `!!document.querySelector('.channel-name-input input')`)
+  await A.evaluate(fill('.channel-name-input input', 'jogos'))
+  await A.evaluate(click('.modal .button', 'Criar canal'))
+  await A.until('Alice está no #jogos', `document.querySelector('.topbar-title')?.textContent === 'jogos'`)
+  await B.until('Bruno vê o #jogos na lista', hasText('.channel', 'jogos'))
+  await B.evaluate(click('.channel', 'jogos'))
+  await B.evaluate(fill('.composer textarea', 'Mensagem só no #jogos', true))
+  await A.until('Alice recebe a mensagem no #jogos', hasText('.msg-text', 'Mensagem só no #jogos'))
+  await A.evaluate(click('.channel', 'geral'))
+  await A.until('o #geral não mostra a mensagem do #jogos', `document.querySelector('.topbar-title')?.textContent === 'geral' && !${hasText('.msg-text', 'Mensagem só no #jogos')}`)
+  await A.evaluate(rightClick('.channel', 'Sala de voz'))
+  await A.evaluate(click('.context-menu button', 'Criar canal de voz'))
+  await A.until('modal de canal de voz aberto', `!!document.querySelector('.channel-name-input input')`)
+  await A.evaluate(fill('.channel-name-input input', 'Duelo'))
+  await A.evaluate(click('.modal .button', 'Criar canal'))
+  await B.until('Bruno vê o canal de voz Duelo', hasText('.channel', 'Duelo'))
+  await A.shot('03b-canais')
+
   await A.evaluate(listenCues)
   await B.evaluate(listenCues)
-  await A.evaluate(click('.channel', 'Sala de voz'))
+  await A.evaluate(click('.channel', 'Duelo'))
   await A.until('Alice sozinha na sala, com o som de entrada', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada' && ${cuesAre([587, 880])}`)
-  await B.evaluate(click('.channel', 'Sala de voz'))
+  await B.evaluate(click('.channel', 'Duelo'))
   await A.until('chamada conectada (Alice)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada' && document.querySelectorAll('.tile').length === 2`)
   await B.until('chamada conectada (Bruno)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada'`)
   await A.until('Alice ouve o som de entrada do Bruno', cuesAre([587, 880, 587, 880]), 10000)
   await B.until('Bruno ouve só o próprio som de entrada', cuesAre([587, 880]), 5000)
   // o microfone falso emite um bipe: o indicador de fala do outro lado precisa acender
   await B.until('áudio da Alice chegando no Bruno', `!!document.querySelector('.tile.speaking')`, 20000)
+  await A.until('os dois aparecem no Duelo e a Sala de voz está vazia', `${usersInVoice('Duelo')} === 2 && ${usersInVoice('Sala de voz')} === 0`)
+
+  // soundboard: Alice escolhe um arquivo, adiciona e toca; o Bruno precisa ouvir
+  await B.evaluate(listenSoundboard)
+  await A.evaluate(click('.call-controls .round-button[title="Soundboard"]'))
+  await A.until('soundboard aberto', `!!document.querySelector('.soundboard')`)
+  await A.evaluate(click('.sound.add'))
+  await A.until('modal de som aberto', `!!document.querySelector('.modal input[type=file]')`)
+  await A.setFile('.modal input[type=file]', BEEP)
+  await A.evaluate(fill('.modal input[placeholder="Nome do som"]', 'Buzina'))
+  await A.evaluate(click('.modal .button', 'Adicionar'))
+  await A.until('som preparado e no soundboard', `!document.querySelector('.modal') && ${hasText('.soundboard .sound', 'Buzina')}`, 20000)
+  await B.until('o som chega no soundboard do Bruno', `window.gordium.getState().then(s => s.networks[0].sounds.some(x => x.name === 'Buzina'))`)
+  await A.shot('04a-soundboard')
+  await A.evaluate(click('.soundboard .sound', 'Buzina'))
+  await B.until('Bruno ouve o som do soundboard', `window.__sfx.some(d => d > 0.9 && d < 1.6)`, 10000)
+  log('  duração do som tocado no Bruno:', await B.evaluate(`window.__sfx.map(d => d.toFixed(2) + ' s').join(', ')`))
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
 
   await A.evaluate(click('.call-controls .round-button[title="Câmera"]'))
   await B.until('Bruno recebe a câmera da Alice', `[...document.querySelectorAll('.tile video')].some(v => v.videoWidth > 0 && !v.paused)`, 30000)

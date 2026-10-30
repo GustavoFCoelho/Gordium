@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import * as hcrypto from 'hypercore-crypto'
-import type { ChatMessage } from '../shared/types'
+import { DEFAULT_TEXT_CHANNEL, type ChatMessage } from '../shared/types'
 import { cleanName } from './network/crypto'
+import { isRecordId } from './records'
 import { writeJsonAtomic } from './storage'
 
 const MAX_TEXT = 4000
@@ -11,8 +12,18 @@ const MAX_STORED = 5000
 /** Quantas mensagens recentes entram na comparação de histórico ao conectar. */
 export const SYNC_WINDOW = 500
 
-function signable(m: Pick<ChatMessage, 'network' | 'author' | 'name' | 'ts' | 'text'>): Buffer {
-  return Buffer.from(JSON.stringify(['gordium-msg/v1', m.network, m.author, m.name, m.ts, m.text]))
+/**
+ * O #geral continua no formato v1 (sem canal) para quem ainda está numa versão
+ * anterior seguir vendo essas mensagens; os outros canais entram na assinatura (v2).
+ */
+function signable(m: Pick<ChatMessage, 'network' | 'channel' | 'author' | 'name' | 'ts' | 'text'>): Buffer {
+  return Buffer.from(
+    JSON.stringify(
+      m.channel === DEFAULT_TEXT_CHANNEL
+        ? ['gordium-msg/v1', m.network, m.author, m.name, m.ts, m.text]
+        : ['gordium-msg/v2', m.network, m.channel, m.author, m.name, m.ts, m.text]
+    )
+  )
 }
 
 function messageId(sig: Buffer): string {
@@ -21,11 +32,12 @@ function messageId(sig: Buffer): string {
 
 export function createMessage(
   network: string,
+  channel: string,
   keyPair: { publicKey: Buffer; secretKey: Buffer },
   name: string,
   text: string
 ): ChatMessage {
-  const base = { network, author: keyPair.publicKey.toString('hex'), name, ts: Date.now(), text: text.slice(0, MAX_TEXT) }
+  const base = { network, channel, author: keyPair.publicKey.toString('hex'), name, ts: Date.now(), text: text.slice(0, MAX_TEXT) }
   const sig = hcrypto.sign(signable(base), keyPair.secretKey)
   return { ...base, id: messageId(sig), sig: sig.toString('hex') }
 }
@@ -43,10 +55,13 @@ export function verifyMessage(raw: unknown, network: string): ChatMessage | null
   if (typeof m.text !== 'string' || m.text.length === 0 || m.text.length > MAX_TEXT) return null
   if (typeof m.ts !== 'number' || !Number.isFinite(m.ts)) return null
   if (typeof m.name !== 'string' || cleanName(m.name) !== m.name) return null
+  const channel = m.channel === undefined ? DEFAULT_TEXT_CHANNEL : m.channel
+  if (typeof channel !== 'string' || !isRecordId(channel)) return null
 
   const msg: ChatMessage = {
     id: '',
     network,
+    channel,
     author: m.author,
     name: m.name,
     ts: m.ts,
@@ -81,7 +96,8 @@ export class ChatStore {
       if (existsSync(file)) {
         try {
           const parsed = JSON.parse(readFileSync(file, 'utf8'))
-          if (Array.isArray(parsed)) list = parsed
+          // Mensagens gravadas antes dos canais existirem são do #geral.
+          if (Array.isArray(parsed)) list = parsed.map((m: ChatMessage) => ({ ...m, channel: m.channel ?? DEFAULT_TEXT_CHANNEL }))
         } catch {
           // histórico corrompido: começa vazio em vez de travar o app
         }

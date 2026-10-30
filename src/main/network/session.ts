@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import * as hcrypto from 'hypercore-crypto'
 import Hyperswarm, { type KeyPair, type PeerDiscovery, type SwarmConnection } from 'hyperswarm'
-import type { ChatMessage, RtcSignal, VoiceState } from '../../shared/types'
+import { DEFAULT_VOICE_CHANNEL, type ChatMessage, type RtcSignal, type VoiceState } from '../../shared/types'
+import { isRecordId, type NetRecord } from '../records'
 import { authProof, checkProof, cleanName, networkId, networkTopic, virtualIp, type NetworkSecret } from './crypto'
 
 const PROTOCOL_VERSION = 1
@@ -28,6 +29,11 @@ export type Frame =
   | { t: 'sync-req'; have: string[] }
   | { t: 'sync-res'; msgs: ChatMessage[] }
   | { t: 'rtc'; data: RtcSignal }
+  /** Resumo dos registros (canais/sons) que tenho: [chave, revisão]. */
+  | { t: 'rec-sum'; items: [string, number][] }
+  | { t: 'rec'; rec: NetRecord }
+  /** Tocar um som do soundboard no canal de voz. */
+  | { t: 'sfx'; id: string; channel: string }
 
 export interface Peer {
   /** Chave de identidade (hex): a mesma em todas as redes. */
@@ -54,6 +60,9 @@ export interface SessionEvents {
   'sync-req': [Peer, unknown]
   'sync-res': [Peer, unknown]
   rtc: [Peer, unknown]
+  'rec-sum': [Peer, unknown]
+  rec: [Peer, unknown]
+  sfx: [Peer, unknown, unknown]
   packet: [Peer, Buffer]
   changed: []
 }
@@ -63,10 +72,17 @@ function identityBinding(handshakeHash: Buffer, transport: Buffer): Buffer {
   return Buffer.concat([Buffer.from('gordium/identity/v1'), handshakeHash, transport])
 }
 
-function cleanVoice(v: unknown): VoiceState | null {
+/** Estado de voz vindo de fora (peer ou interface). Versões antigas não mandam canal: é a Sala de voz. */
+export function cleanVoice(v: unknown): VoiceState | null {
   if (!v || typeof v !== 'object') return null
   const o = v as Record<string, unknown>
-  return { muted: !!o.muted, deafened: !!o.deafened, camera: !!o.camera, screen: !!o.screen }
+  return {
+    channel: isRecordId(o.channel) ? o.channel : DEFAULT_VOICE_CHANNEL,
+    muted: !!o.muted,
+    deafened: !!o.deafened,
+    camera: !!o.camera,
+    screen: !!o.screen
+  }
 }
 
 /**
@@ -292,6 +308,15 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
         break
       case 'rtc':
         this.emit('rtc', peer, frame.data)
+        break
+      case 'rec-sum':
+        this.emit('rec-sum', peer, frame.items)
+        break
+      case 'rec':
+        this.emit('rec', peer, frame.rec)
+        break
+      case 'sfx':
+        this.emit('sfx', peer, frame.id, frame.channel)
         break
     }
   }

@@ -1,4 +1,14 @@
-import type { AppState, ChatMessage, RtcSignal, ScreenChoice, ScreenSource, UpdateState, VoiceState } from '../shared/types'
+import type {
+  AppState,
+  ChannelKind,
+  ChatMessage,
+  NewSound,
+  RtcSignal,
+  ScreenChoice,
+  ScreenSource,
+  UpdateState,
+  VoiceState
+} from '../shared/types'
 
 /** API que o preload expõe para a interface em window.gordium. */
 export interface GordiumApi {
@@ -6,8 +16,18 @@ export interface GordiumApi {
   onState(cb: (state: AppState) => void): () => void
 
   getMessages(network: string): Promise<ChatMessage[]>
-  sendChat(network: string, text: string): Promise<ChatMessage | null>
+  sendChat(network: string, channel: string, text: string): Promise<ChatMessage | null>
   onChat(cb: (network: string, messages: ChatMessage[]) => void): () => void
+
+  createChannel(network: string, kind: ChannelKind, name: string): Promise<string>
+  renameChannel(network: string, id: string, name: string): Promise<void>
+  deleteChannel(network: string, id: string): Promise<void>
+
+  addSound(network: string, sound: NewSound): Promise<string>
+  deleteSound(network: string, id: string): Promise<void>
+  getSoundAudio(network: string, id: string): Promise<{ mime: string; audio: string } | null>
+  playSound(network: string, channel: string, id: string): Promise<void>
+  onSfx(cb: (network: string, peer: string, sound: string, channel: string) => void): () => void
 
   createNetwork(name: string): Promise<string>
   joinNetwork(invite: string): Promise<string>
