@@ -225,6 +225,8 @@ function setupIpc(): void {
   ipcMain.handle('self:name', (_e, name: string) => core.setName(name))
   ipcMain.handle('voice:set', (_e, network: string, state: unknown) => core.setVoice(network, state))
   ipcMain.on('rtc:send', (_e, network: string, peer: string, signal: RtcSignal) => core.sendRtc(network, peer, signal))
+  // Relay das chamadas pela conexão P2P. GORDIUM_FORCE_RELAY=1 usa só ele (para testar o caminho).
+  ipcMain.handle('rtc:relay', async () => ({ server: await core.relayServer(), forceRelay: process.env.GORDIUM_FORCE_RELAY === '1' }))
 
   ipcMain.handle('screen:sources', async (): Promise<ScreenSource[]> => {
     const sources = await desktopCapturer.getSources({

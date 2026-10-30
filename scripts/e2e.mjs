@@ -5,6 +5,8 @@
 // Chromium. Capturas de tela vão para out/e2e/.
 //
 // Uso: npm run test:e2e   (faz o build antes; precisa de internet)
+//      npm run test:e2e:relay   (a chamada só pode passar pelo relay P2P do Gordium,
+//      como acontece quando a conexão direta não sai: NAT simétrico, CGNAT, 4G)
 
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -18,12 +20,13 @@ const electron = createRequire(import.meta.url)('electron')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a)
+const RELAY = process.argv.includes('--relay')
 
 function launch(profile, port) {
   rmSync(join(process.env.APPDATA ?? '', `Gordium-${profile}`), { recursive: true, force: true })
   return spawn(electron, ['.', `--remote-debugging-port=${port}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], {
     cwd: ROOT,
-    env: { ...process.env, GORDIUM_PROFILE: profile },
+    env: { ...process.env, GORDIUM_PROFILE: profile, ...(RELAY ? { GORDIUM_FORCE_RELAY: '1' } : {}) },
     stdio: 'ignore'
   })
 }
@@ -196,6 +199,49 @@ const VK_CONTROL = 0x11
 const seesMuted = (name) =>
   `[...document.querySelectorAll('.voice-user')].some(e => e.textContent.includes(${JSON.stringify(name)}) && !!e.querySelector('.voice-flags svg'))`
 
+/** Guarda as conexões WebRTC que o app criar, para olhar as estatísticas. */
+const trackConnections = `(() => {
+  window.__pcs = []
+  const Original = window.RTCPeerConnection
+  window.RTCPeerConnection = class extends Original {
+    constructor(...args) {
+      super(...args)
+      window.__pcs.push(this)
+    }
+  }
+  return true
+})()`
+
+/** Tipos dos candidatos do caminho escolhido em cada conexão ativa: "host/host", "relay/relay"... */
+const selectedPaths = `(async () => {
+  const out = []
+  for (const pc of window.__pcs) {
+    if (pc.connectionState !== 'connected') continue
+    const stats = await pc.getStats()
+    stats.forEach((s) => {
+      const pair = s.type === 'transport' && s.selectedCandidatePairId && stats.get(s.selectedCandidatePairId)
+      if (pair) out.push(stats.get(pair.localCandidateId).candidateType + '/' + stats.get(pair.remoteCandidateId).candidateType)
+    })
+  }
+  return out
+})()`
+
+/** Quadros de vídeo da tela recebidos e pacotes perdidos (soma das conexões). */
+const screenStats = `(async () => {
+  let frames = 0, lost = 0, packets = 0
+  for (const pc of window.__pcs) {
+    const stats = await pc.getStats()
+    stats.forEach((s) => {
+      if (s.type === 'inbound-rtp' && s.kind === 'video' && s.frameWidth >= 1280) {
+        frames += s.framesDecoded ?? 0
+        lost += s.packetsLost ?? 0
+        packets += s.packetsReceived ?? 0
+      }
+    })
+  }
+  return { frames, lost, packets }
+})()`
+
 /** Quantas pessoas aparecem embaixo de um canal de voz na barra lateral. */
 const usersInVoice = (name) =>
   `([...document.querySelectorAll('.channels > div')].find(d => d.querySelector('.channel')?.textContent.includes(${JSON.stringify(name)}))?.querySelectorAll('.voice-user').length ?? -1)`
@@ -209,6 +255,8 @@ try {
   await B.until('Bruno abriu o app', `!!document.querySelector('.app')`)
   await A.evaluate(`window.gordium.setName('Alice')`)
   await B.evaluate(`window.gordium.setName('Bruno')`)
+  await A.evaluate(trackConnections)
+  await B.evaluate(trackConnections)
   await A.shot('01-boas-vindas')
 
   await A.evaluate(click('.button', 'Criar uma rede'))
@@ -262,6 +310,11 @@ try {
   await B.evaluate(click('.channel', 'Duelo'))
   await A.until('chamada conectada (Alice)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada' && document.querySelectorAll('.tile').length === 2`)
   await B.until('chamada conectada (Bruno)', `document.querySelector('.voice-panel-status')?.textContent === 'Voz conectada'`)
+  {
+    const paths = await A.evaluate(selectedPaths)
+    log('  caminho da chamada:', paths.join(', ') || '(nenhum)')
+    if (RELAY && (paths.length === 0 || paths.some((p) => p !== 'relay/relay'))) throw new Error('a chamada não passou pelo relay')
+  }
   await A.until('Alice ouve o som de entrada do Bruno', cuesAre([587, 880, 587, 880]), 10000)
   await B.until('Bruno ouve só o próprio som de entrada', cuesAre([587, 880]), 5000)
   // o microfone falso emite um bipe: o indicador de fala do outro lado precisa acender
@@ -340,6 +393,15 @@ try {
   await B.evaluate(click('.modal .button', 'Transmitir'))
   await A.until('Alice recebe a tela do Bruno', `[...document.querySelectorAll('.tile-screen video')].some(v => v.videoWidth > 0)`, 30000)
   log('  resolução da tela recebida:', await A.evaluate(`[...document.querySelectorAll('.tile-screen video')].map(v => v.videoWidth + 'x' + v.videoHeight).join(',')`))
+  {
+    const before = await A.evaluate(screenStats)
+    await sleep(3000)
+    const after = await A.evaluate(screenStats)
+    const fps = (after.frames - before.frames) / 3
+    const loss = after.packets ? (100 * after.lost) / (after.packets + after.lost) : 0
+    log(`  tela: ${fps.toFixed(1)} quadros/s, ${loss.toFixed(2)}% de pacotes perdidos`)
+    if (fps < 5) throw new Error(`tela travada: ${fps.toFixed(1)} quadros/s`)
+  }
   await sleep(1500)
   await A.shot('04-chamada-alice')
   await B.shot('05-chamada-bruno')

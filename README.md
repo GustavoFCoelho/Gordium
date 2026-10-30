@@ -33,7 +33,7 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
                       │  │ Gordium.exe --vpn-helper      │ ← único processo como administrador
                       │  │ adaptador Wintun "Gordium"    │
                       │  └───────────────────────────────┘
-                      └──► áudio/vídeo P2P (direto, ou pelo túnel da VPN)
+                      └──► áudio/vídeo P2P (direto, ou pelo relay na conexão da rede)
 ```
 
 - **Encontrar os outros sem servidor.** A chave da rede (que vai no convite) gera um tópico.
@@ -54,6 +54,13 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   (o próprio `Gordium.exe --vpn-helper`) que cuida só do adaptador. Os dois conversam por um
   *named pipe* de nome aleatório, autenticado por token; se o app fechar, o auxiliar remove o
   adaptador e sai. O auxiliar escolhe o DLL e valida IP e nome do adaptador por conta própria.
+- **Chamada quando a conexão direta não sai.** O WebRTC tenta primeiro o caminho direto (STUN
+  público para atravessar o NAT). Entre redes com NAT simétrico (CGNAT de operadora, 4G, rede de
+  empresa) esse caminho falha, e normalmente seria preciso um servidor TURN na internet. No
+  Gordium, cada app roda um TURN mínimo só para o próprio WebRTC, e o endereço de relay de cada
+  pessoa é o IP virtual dela: o áudio e o vídeo seguem pela conexão Hyperswarm que já liga os
+  dois (a mesma do chat), sem precisar ligar a VPN. Só os pares que não conectam direto usam o
+  relay. O servidor só atende pacotes da própria máquina, com usuário e senha aleatórios.
 - **Canais e soundboard sem servidor.** Criar, renomear ou excluir um canal ou som gera um
   registro assinado por quem fez; os membros trocam os registros ao se conectar e repassam os
   novos na hora, e em conflito vale a alteração mais recente. Os sons são comprimidos em Opus
@@ -116,6 +123,7 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 |---|---|---|
 | `npm run test:net` | 3 identidades se acham pela DHT pública, autenticam, sincronizam o chat, rejeitam mensagem forjada, trocam estado de voz, sinalização e pacotes da VPN (datagrama e fallback); duas redes ao mesmo tempo; reconexão após reiniciar | internet |
 | `npm run test:e2e` | duas instâncias reais do app controladas pelo DevTools: criar rede, convite, chat, sala de voz, áudio chegando, câmera, tela em 1080p, mute e saída da chamada | internet |
+| `npm run test:e2e:relay` | o mesmo, mas a chamada só pode passar pelo relay na conexão da rede (como entre redes com NAT simétrico); confere que o caminho escolhido é relay e que a tela chega fluida | internet |
 | `npm run test:vpn` | adaptador e roteamento da VPN com um peer simulado: Windows → túnel, ping injetado respondido pelo Windows e descarte de IP forjado | **terminal como administrador** |
 | `npm run test:vpn-helper` | o caminho do app: roda como usuário comum, abre o processo auxiliar pelo UAC e testa os dois sentidos do túnel pelo pipe; ao fechar, confere que o adaptador sumiu | aceitar o UAC |
 | `npm run typecheck` | tipos do processo principal, do preload e da interface | — |
@@ -147,9 +155,11 @@ atualizações não têm assinatura digital.
 
 ## Limitações conhecidas
 
-- **NAT muito restritivo.** Se os dois lados estiverem atrás de NAT simétrico (alguns CGNATs e
-  redes móveis), o hole punching pode falhar e eles não se conectam. O próximo passo natural é
-  usar outro membro bem conectado como *relay* cego (o HyperDHT já tem suporte).
+- **NAT muito restritivo.** A chamada passa pela conexão da rede quando o WebRTC não conecta
+  direto, mas essa conexão também depende do hole punching do Hyperswarm. Se nem ela sair (dois
+  lados com NAT simétrico, alguns CGNATs e redes móveis), as duas pessoas não se veem na rede. O
+  próximo passo natural é usar outro membro bem conectado como *relay* cego (o HyperDHT já tem
+  suporte).
 - **Tamanho dos grupos.** A mídia é em malha: cada pessoa envia uma cópia do vídeo para cada
   outra. Funciona bem até ~6–8 pessoas com vídeo e ~10–15 só com voz.
 - **Convite não é revogável.** O convite é a chave da rede. Para tirar alguém, crie uma rede nova.

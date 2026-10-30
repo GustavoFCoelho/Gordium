@@ -23,11 +23,12 @@ const TRACK_TYPE: Record<MediaKind, 'audio' | 'video'> = {
 }
 
 /**
- * STUN público só para descobrir o próprio endereço. Com a VPN ligada, o
- * WebRTC também enxerga o IP 100.88.x.y e pode usar o túnel do Gordium, o
- * que cobre redes em que a conexão direta falha.
+ * STUN público só para descobrir o próprio endereço. Quando a conexão direta
+ * não sai (NAT simétrico, CGNAT, 4G, rede de empresa), entra o TURN local do
+ * Gordium, que leva a chamada pela conexão P2P da rede (ver main/turn.ts), com
+ * ou sem VPN. O WebRTC só usa o relay se nenhum caminho direto funcionar.
  */
-const ICE_SERVERS: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }]
+const STUN_SERVERS: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }]
 
 export interface ScreenQuality {
   label: string
@@ -131,6 +132,7 @@ class CallManager {
   private roomMembers: Set<string> | null = null
 
   private lastSfx = new Map<string, number>()
+  private rtcConfig: RTCConfiguration = { iceServers: STUN_SERVERS, bundlePolicy: 'max-bundle' }
 
   constructor() {
     api.onSignal((network, peer, signal) => this.onSignal(network, peer, signal))
@@ -182,6 +184,12 @@ class CallManager {
     this.roomMembers = null
     this.audioCtx = new AudioContext()
     void this.audioCtx.resume()
+    const relay = await api.getRelay().catch(() => null)
+    this.rtcConfig = {
+      iceServers: relay?.server ? [...STUN_SERVERS, relay.server] : STUN_SERVERS,
+      iceTransportPolicy: relay?.forceRelay ? 'relay' : 'all',
+      bundlePolicy: 'max-bundle'
+    }
     try {
       this.local.mic = await this.openMic()
     } catch (err) {
@@ -529,7 +537,7 @@ class CallManager {
   // --- conexões WebRTC -------------------------------------------------------
 
   private createLink(peer: string, cid: string, offerer: boolean): Link {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, bundlePolicy: 'max-bundle' })
+    const pc = new RTCPeerConnection(this.rtcConfig)
     const link: Link = {
       peer,
       cid,

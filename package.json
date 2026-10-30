@@ -17,6 +17,7 @@
     "test:vpn": "rolldown ./scripts/vpn-selftest.ts --format cjs --platform node --file out/tests/vpn-selftest.cjs --external hyperswarm --external hypercore-crypto --external koffi && node out/tests/vpn-selftest.cjs",
     "test:vpn-helper": "node scripts/vpn-helper-test.mjs",
     "test:e2e": "electron-vite build && node scripts/e2e.mjs",
+    "test:e2e:relay": "electron-vite build && node scripts/e2e.mjs --relay",
     "dist": "electron-vite build && electron-builder --win"
   },
   "dependencies": {

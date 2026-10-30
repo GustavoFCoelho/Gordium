@@ -33,6 +33,7 @@ import {
   type SoundData
 } from './records'
 import { readJson, writeJsonAtomic } from './storage'
+import { TurnRelay, type RelayServer } from './turn'
 import { VpnManager } from './vpn/manager'
 import type { TunnelOpener } from './vpn/tunnel'
 
@@ -87,6 +88,8 @@ export class Core extends EventEmitter<CoreEvents> {
   readonly selfId: string
   readonly vip: string
   readonly vpn: VpnManager
+  /** Relay das chamadas pela conexão P2P, para quando o WebRTC não conecta direto. */
+  private readonly relay: TurnRelay
 
   private readonly identity: StoredIdentity
   private readonly keyPair: { publicKey: Buffer; secretKey: Buffer }
@@ -121,6 +124,7 @@ export class Core extends EventEmitter<CoreEvents> {
     this.settings = { vpnAutoStart: false, ...readJson<Partial<Settings>>(this.file('settings.json'), {}) }
     this.vpn = new VpnManager({ ip: this.vip, open: openTunnel })
     this.vpn.on('changed', () => this.emit('changed'))
+    this.relay = new TurnRelay(this.vip)
   }
 
   private file(name: string): string {
@@ -136,6 +140,12 @@ export class Core extends EventEmitter<CoreEvents> {
       }
     }
     if (this.settings.vpnAutoStart) void this.startVpn(true)
+    this.relay.start().catch((err) => console.warn('[relay] não subiu:', (err as Error).message))
+  }
+
+  /** Servidor TURN local para o WebRTC da interface (null se não subiu). */
+  relayServer(): Promise<RelayServer | null> {
+    return this.relay.server()
   }
 
   /**
@@ -152,6 +162,7 @@ export class Core extends EventEmitter<CoreEvents> {
   async stopVpn(): Promise<void> {
     this.saveSettings({ vpnAutoStart: false })
     await this.vpn.stop()
+    this.relay.stop()
   }
 
   private saveSettings(patch: Partial<Settings>): void {
@@ -268,7 +279,10 @@ export class Core extends EventEmitter<CoreEvents> {
     const entry = this.networks.get(id)
     if (!entry) return
     if (this.voice?.network === id) this.voice = null
-    for (const peer of entry.session.connectedPeers()) this.vpn.removeRoute(peer.vip, this.routeKey(id, peer))
+    for (const peer of entry.session.connectedPeers()) {
+      this.vpn.removeRoute(peer.vip, this.routeKey(id, peer))
+      this.relay.removeRoute(peer.vip, this.routeKey(id, peer))
+    }
     this.networks.delete(id)
     await entry.session.stop()
     this.chat.remove(id)
@@ -432,7 +446,10 @@ export class Core extends EventEmitter<CoreEvents> {
       this.remember(entry, peer)
       session.rememberPeer(peer.transport)
       if (this.vipConflict(peer.id)) console.warn(`[vpn] ${peer.name}: IP virtual ${peer.vip} em conflito, sem rota`)
-      else this.vpn.addRoute(peer.vip, this.routeKey(net, peer), (packet) => session.sendPacket(peer.id, packet))
+      else {
+        this.vpn.addRoute(peer.vip, this.routeKey(net, peer), (packet) => session.sendPacket(peer.id, packet))
+        this.relay.addRoute(peer.vip, this.routeKey(net, peer), (frame) => session.sendRelay(peer.id, frame))
+      }
       session.send(peer.id, { t: 'sync-req', have: this.chat.recentIds(net) })
       session.send(peer.id, { t: 'rec-sum', items: this.records.summary(net) })
       this.emit('changed')
@@ -440,6 +457,7 @@ export class Core extends EventEmitter<CoreEvents> {
     session.on('peer-down', (peer) => {
       this.remember(entry, peer)
       this.vpn.removeRoute(peer.vip, this.routeKey(net, peer))
+      this.relay.removeRoute(peer.vip, this.routeKey(net, peer))
       this.emit('changed')
     })
     session.on('peer-update', (peer) => {
@@ -449,6 +467,9 @@ export class Core extends EventEmitter<CoreEvents> {
     session.on('changed', () => this.emit('changed'))
     session.on('packet', (peer, packet) => {
       if (!this.vipConflict(peer.id)) this.vpn.fromPeer(peer.vip, packet)
+    })
+    session.on('relay', (peer, frame) => {
+      if (!this.vipConflict(peer.id)) this.relay.fromPeer(peer.vip, frame)
     })
 
     session.on('chat', (_peer, raw) => this.receive(net, [raw]))

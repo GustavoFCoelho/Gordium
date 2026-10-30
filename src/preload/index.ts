@@ -35,6 +35,7 @@ const api: GordiumApi = {
   setVoice: (network, state) => ipcRenderer.invoke('voice:set', network, state),
   sendSignal: (network, peer, signal) => ipcRenderer.send('rtc:send', network, peer, signal),
   onSignal: (cb) => on('rtc', cb),
+  getRelay: () => ipcRenderer.invoke('rtc:relay'),
 
   getScreenSources: () => ipcRenderer.invoke('screen:sources'),
   selectScreenSource: (id, audio) => ipcRenderer.invoke('screen:select', id, audio),

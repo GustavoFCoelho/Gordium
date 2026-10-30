@@ -25,6 +25,12 @@ const MAX_FRAME_BYTES = 512 * 1024
 const PACKET_IPV4 = 0x04
 /** Cabeçalho UDX (20) + envelope do secret-stream (24) + margem. */
 const DATAGRAM_OVERHEAD = 64
+/** Pacote do relay das chamadas (ver turn.ts) e pedaço de um que não coube num datagrama. */
+const PACKET_RELAY = 0x05
+const PACKET_RELAY_PART = 0x06
+const MAX_RELAY_PARTS = 4
+/** Pacotes em pedaços esperando o resto, por conexão (os incompletos vão saindo). */
+const MAX_PENDING_RELAY = 32
 
 export type Frame =
   | { t: 'hello'; v: number; proof: string; id: string; isig: string; name: string; voice: VoiceState | null }
@@ -52,6 +58,8 @@ export interface Peer {
   authed: boolean
   /** Libera a vaga de conexão pendente de autenticação. */
   settle?: () => void
+  /** Pedaços de pacotes do relay chegando: id → partes. */
+  relayParts?: Map<number, { parts: (Buffer | undefined)[]; got: number }>
 }
 
 export interface LocalProfile {
@@ -71,6 +79,7 @@ export interface SessionEvents {
   rec: [Peer, unknown]
   sfx: [Peer, unknown, unknown]
   packet: [Peer, Buffer]
+  relay: [Peer, Buffer]
   changed: []
 }
 
@@ -114,6 +123,7 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
   private lookups = 0
   private readonly peers = new Map<string, Peer>()
   private pendingAuth = 0
+  private relayId = 0
 
   constructor(
     secret: NetworkSecret,
@@ -204,6 +214,49 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
     return true
   }
 
+  /**
+   * Pacote do relay das chamadas: sempre datagrama (áudio e vídeo em tempo real
+   * não esperam retransmissão). Se não couber em um, vai em até 4 pedaços.
+   */
+  sendRelay(peerId: string, frame: Buffer): void {
+    const p = this.peers.get(peerId)
+    if (!p) return
+    const room = (p.conn.rawStream?.mtu ?? 1200) - DATAGRAM_OVERHEAD
+    if (frame.length + 1 <= room) {
+      p.conn.trySend(Buffer.concat([Buffer.of(PACKET_RELAY), frame]))
+      return
+    }
+    const chunk = room - 5
+    const count = Math.ceil(frame.length / chunk)
+    if (count > MAX_RELAY_PARTS) return
+    const id = (this.relayId = (this.relayId + 1) & 0xffff)
+    for (let i = 0; i < count; i++) {
+      const head = Buffer.of(PACKET_RELAY_PART, id >> 8, id & 0xff, i, count)
+      p.conn.trySend(Buffer.concat([head, frame.subarray(i * chunk, (i + 1) * chunk)]))
+    }
+  }
+
+  /** Junta os pedaços de um pacote do relay; se algum se perder, o pacote se perde (como no UDP). */
+  private relayPart(peer: Peer, data: Buffer): void {
+    if (data.length < 6) return
+    const id = data.readUInt16BE(1)
+    const index = data[3]
+    const count = data[4]
+    if (count < 2 || count > MAX_RELAY_PARTS || index >= count) return
+    const pending = (peer.relayParts ??= new Map())
+    let entry = pending.get(id)
+    if (!entry || entry.parts.length !== count) {
+      if (pending.size >= MAX_PENDING_RELAY) pending.delete(pending.keys().next().value!)
+      entry = { parts: new Array<Buffer | undefined>(count), got: 0 }
+      pending.set(id, entry)
+    }
+    if (entry.parts[index]) return
+    entry.parts[index] = Buffer.from(data.subarray(5))
+    if (++entry.got < count) return
+    pending.delete(id)
+    this.emit('relay', peer, Buffer.concat(entry.parts as Buffer[]))
+  }
+
   private write(conn: SwarmConnection, frame: Frame): void {
     conn.write(Buffer.from(JSON.stringify(frame)))
   }
@@ -237,7 +290,10 @@ export class NetworkSession extends EventEmitter<SessionEvents> {
     conn.on('error', () => {})
     conn.on('data', (data: Buffer) => this.onData(peer, data))
     conn.on('message', (data: Buffer) => {
-      if (peer.authed && data.length > 1 && data[0] === PACKET_IPV4) this.emit('packet', peer, data.subarray(1))
+      if (!peer.authed || data.length < 2) return
+      if (data[0] === PACKET_IPV4) this.emit('packet', peer, data.subarray(1))
+      else if (data[0] === PACKET_RELAY) this.emit('relay', peer, data.subarray(1))
+      else if (data[0] === PACKET_RELAY_PART) this.relayPart(peer, data)
     })
     conn.on('close', () => {
       clearTimeout(timer)

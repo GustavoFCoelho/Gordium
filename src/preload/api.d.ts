@@ -39,6 +39,8 @@ export interface GordiumApi {
   setVoice(network: string, state: VoiceState | null): Promise<void>
   sendSignal(network: string, peer: string, signal: RtcSignal): void
   onSignal(cb: (network: string, peer: string, signal: RtcSignal) => void): () => void
+  /** Servidor TURN local que leva a chamada pela conexão P2P quando a direta não sai. */
+  getRelay(): Promise<{ server: { urls: string; username: string; credential: string } | null; forceRelay: boolean }>
 
   getScreenSources(): Promise<ScreenSource[]>
   selectScreenSource(id: string, audio: boolean): Promise<ScreenChoice>
