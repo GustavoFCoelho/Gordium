@@ -6,7 +6,7 @@
 //
 // Uso: npm run test:e2e   (faz o build antes; precisa de internet)
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -97,14 +97,19 @@ const fill = (selector, value, enter = false) =>
   `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('não achei ${selector}'); const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); ${enter ? "el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));" : ''} return true })()`
 
 /**
- * Escuta os sons da sala: registra a nota base (< 1 kHz) de cada oscilador tocado.
- * Entrada = [587, 880] (subindo); saída = [880, 587] (descendo).
+ * Escuta os sons da sala: registra a nota base de cada nota tocada (cada uma vem
+ * com a oitava acima logo em seguida, que fica de fora).
+ * Entrada = [587, 880] (subindo); saída = [880, 587] (descendo);
+ * atalho de mutar = [523, 392]; de desmutar = [392, 523].
  */
 const listenCues = `(() => {
   window.__cues = []
+  let previous = 0
   const start = OscillatorNode.prototype.start
   OscillatorNode.prototype.start = function (...args) {
-    if (this.frequency.value < 1000) window.__cues.push(Math.round(this.frequency.value))
+    const hz = this.frequency.value
+    if (Math.abs(hz - previous * 2) > 0.5) window.__cues.push(Math.round(hz))
+    previous = hz
     return start.apply(this, args)
   }
   return true
@@ -164,6 +169,14 @@ function writeBeep(path) {
 }
 const BEEP = join(SHOTS, 'buzina.wav')
 writeBeep(BEEP)
+
+/** Aperta uma combinação no teclado do Windows (fora do app), como a pessoa faria dentro de um jogo. */
+const pressKeys = (keys) =>
+  spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}')`])
+
+/** Se a outra pessoa aparece mutada na lista da sala. */
+const seesMuted = (name) =>
+  `[...document.querySelectorAll('.voice-user')].some(e => e.textContent.includes(${JSON.stringify(name)}) && !!e.querySelector('.voice-flags svg'))`
 
 /** Quantas pessoas aparecem embaixo de um canal de voz na barra lateral. */
 const usersInVoice = (name) =>
@@ -259,6 +272,27 @@ try {
   await B.until('Bruno ouve só o trecho escolhido (2 s de 880 Hz)', `window.__sfx.some(x => x.d > 1.9 && x.d < 2.6 && Math.abs(x.hz - 880) < 30)`, 10000)
   log('  som tocado no Bruno:', await B.evaluate(`window.__sfx.map(x => x.d.toFixed(2) + ' s, ' + Math.round(x.hz) + ' Hz').join(' | ')`))
   await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+
+  // atalho de mutar: vem desligado; a Alice ativa, grava Ctrl+Alt+Shift+F9 e usa com o app em segundo plano
+  await A.evaluate(click('.icon-button[title="Configurações"]'))
+  await A.until('configurações abertas, atalho desligado', `document.querySelector('.hotkey-setting input[type=checkbox]')?.checked === false`)
+  await A.evaluate(click('.hotkey-setting input[type=checkbox]'))
+  await A.until('gravando a tecla', `document.querySelector('.hotkey-key')?.textContent === 'Pressione a tecla…'`, 5000)
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'm', bubbles: true }))`)
+  await A.until('letra sozinha é recusada', hasText('.hotkey-setting .form-error', 'junto com Ctrl'), 5000)
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', key: 'F9', ctrlKey: true, altKey: true, shiftKey: true, bubbles: true }))`)
+  await A.until('atalho gravado', `document.querySelector('.hotkey-key')?.textContent === 'Ctrl + Alt + Shift + F9'`, 5000)
+  await sleep(500)
+  await A.until('Windows aceitou o atalho', `!document.querySelector('.hotkey-setting .form-error')`, 5000)
+  await A.shot('04b-atalho-mutar')
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await A.until('dica do botão mostra o atalho', `!!document.querySelector('.call-controls .round-button[title="Silenciar (Ctrl + Alt + Shift + F9)"]')`, 5000)
+  pressKeys('^%+{F9}')
+  await B.until('Bruno vê a Alice mutada pelo atalho', seesMuted('Alice'), 10000)
+  await A.until('Alice ouve o som de mutar', `JSON.stringify(window.__cues.slice(-2)) === '[523,392]'`, 5000)
+  pressKeys('^%+{F9}')
+  await B.until('Bruno vê a Alice desmutada pelo atalho', `!(${seesMuted('Alice')})`, 10000)
+  await A.until('Alice ouve o som de desmutar', `JSON.stringify(window.__cues.slice(-2)) === '[392,523]'`, 5000)
 
   await A.evaluate(click('.call-controls .round-button[title="Câmera"]'))
   await B.until('Bruno recebe a câmera da Alice', `[...document.querySelectorAll('.tile video')].some(v => v.videoWidth > 0 && !v.paused)`, 30000)

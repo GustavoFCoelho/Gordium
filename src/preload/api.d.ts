@@ -44,6 +44,10 @@ export interface GordiumApi {
   onWindowTrack(cb: (track: WindowTrack) => void): () => void
   stopWindowTracking(): Promise<void>
 
+  /** Atalho global de mutar/desmutar (null desliga). false = o Windows recusou (outro programa usa a combinação). */
+  setMuteHotkey(accelerator: string | null): Promise<boolean>
+  onMuteHotkey(cb: () => void): () => void
+
   vpnStart(): Promise<void>
   vpnStop(): Promise<void>
 

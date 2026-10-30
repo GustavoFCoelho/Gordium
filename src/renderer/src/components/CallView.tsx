@@ -166,7 +166,7 @@ export function CallView({
         <button
           className={`round-button${c.muted || c.deafened ? ' off' : ''}`}
           onClick={() => c.setMuted(!c.muted)}
-          title={c.muted ? 'Ativar microfone' : 'Silenciar'}
+          title={c.muteTitle}
         >
           {c.muted || c.deafened ? <MicOffIcon /> : <MicIcon />}
         </button>

@@ -7,6 +7,8 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   "+" ao lado de cada categoria). Cada canal de voz é uma sala separada.
 - **Sala de voz**: mute, ensurdecer, indicador de quem está falando, volume por pessoa e sons de
   entrada/saída.
+- **Atalho para mutar/desmutar** (opcional, vem desligado): uma tecla ou combinação escolhida nas
+  configurações, que funciona com o Gordium em segundo plano, dentro de um jogo.
 - **Soundboard**: sons de até 6 s que qualquer membro adiciona e toca para todos da sala. Ao adicionar,
   dá para escolher o trecho do arquivo (até de uma música inteira) na forma de onda e ouvir antes.
 - **Câmera e compartilhamento de tela**: tela inteira ou uma janela, de 720p30 a 1080p60, com

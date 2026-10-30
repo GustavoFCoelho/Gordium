@@ -41,6 +41,9 @@ const api: GordiumApi = {
   onWindowTrack: (cb) => on('screen:window', cb),
   stopWindowTracking: () => ipcRenderer.invoke('screen:stop-tracking'),
 
+  setMuteHotkey: (accelerator) => ipcRenderer.invoke('hotkey:mute', accelerator),
+  onMuteHotkey: (cb) => on('hotkey:mute', cb),
+
   vpnStart: () => ipcRenderer.invoke('vpn:start'),
   vpnStop: () => ipcRenderer.invoke('vpn:stop'),
 

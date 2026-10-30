@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { hotkeyFromEvent, hotkeyLabel, modifiersLabel } from '../../../shared/hotkeys'
 import type { AppState, ChannelInfo, ChannelKind, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
 import { call, SCREEN_QUALITIES, useCall } from '../rtc/call'
 import { decodeAudioFile, encodeSound, MAX_SOUND_SECONDS, suggestSegment, type Segment } from '../rtc/soundboard'
@@ -378,6 +379,78 @@ function DeviceSelect({ kind, value, onChange, devices }: { kind: MediaDeviceKin
   )
 }
 
+/** Atalho global de mutar/desmutar: desligado por padrão; ao ativar, a pessoa aperta a tecla que quer usar. */
+function MuteHotkeyField() {
+  const c = useCall()
+  const { muteHotkeyEnabled: enabled, muteHotkey } = c.settings
+  const [recording, setRecording] = useState(false)
+  const [held, setHeld] = useState('')
+  const [problem, setProblem] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!recording) return
+    // O atalho atual não pode engolir a tecla que a pessoa vai apertar.
+    c.pauseHotkey(true)
+    const onDown = (e: KeyboardEvent) => {
+      // Captura antes de todo mundo: Esc aqui cancela a gravação, não fecha as configurações.
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.code === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) return setRecording(false)
+      const result = hotkeyFromEvent(e)
+      if (result.ok) {
+        setRecording(false)
+        setProblem(null)
+        void c.setSettings({ muteHotkey: result.accelerator, muteHotkeyEnabled: true })
+      } else if (result.error === null) setHeld(modifiersLabel(e))
+      else setProblem(result.error)
+    }
+    const onUp = (e: KeyboardEvent) => setHeld(modifiersLabel(e))
+    window.addEventListener('keydown', onDown, true)
+    window.addEventListener('keyup', onUp, true)
+    return () => {
+      window.removeEventListener('keydown', onDown, true)
+      window.removeEventListener('keyup', onUp, true)
+      setHeld('')
+      c.pauseHotkey(false)
+    }
+  }, [recording, c])
+
+  const toggle = (on: boolean) => {
+    setProblem(null)
+    void c.setSettings({ muteHotkeyEnabled: on })
+    setRecording(on && !muteHotkey)
+  }
+
+  return (
+    <div className="hotkey-setting">
+      <label className="check">
+        <input type="checkbox" checked={enabled} onChange={(e) => toggle(e.target.checked)} />
+        Atalho para mutar e desmutar
+      </label>
+      {enabled && (
+        <div className="hotkey-row">
+          <button
+            type="button"
+            className={`hotkey-key${recording ? ' recording' : ''}`}
+            onClick={() => {
+              setProblem(null)
+              setRecording(!recording)
+            }}
+          >
+            {recording ? (held ? `${held} + …` : 'Pressione a tecla…') : muteHotkey ? hotkeyLabel(muteHotkey) : 'Escolher tecla'}
+          </button>
+          <span className="hint small">{recording ? 'Esc cancela' : muteHotkey ? 'Clique para trocar' : ''}</span>
+        </div>
+      )}
+      {enabled && (problem ?? (!recording && c.hotkeyError)) && <div className="form-error">{problem ?? c.hotkeyError}</div>}
+      <p className="hint small">
+        Funciona com o Gordium em segundo plano, como no meio de um jogo. Enquanto estiver ativo, a combinação fica reservada
+        para o Gordium e não chega aos outros programas.
+      </p>
+    </div>
+  )
+}
+
 export function SettingsModal({ state, onClose }: { state: AppState; onClose(): void }) {
   const c = useCall()
   const devices = useDevices()
@@ -432,7 +505,7 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
           </label>
           <label className="check">
             <input type="checkbox" checked={c.settings.sounds} onChange={(e) => setDevice({ sounds: e.target.checked })} />
-            Sons de entrada e saída da sala
+            Sons da sala e do atalho de mutar
           </label>
           <label>
             Volume do soundboard
@@ -446,6 +519,7 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
             />
           </label>
         </div>
+        <MuteHotkeyField />
       </section>
 
       <section className="settings-section">

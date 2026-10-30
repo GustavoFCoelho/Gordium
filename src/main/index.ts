@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, type DesktopCapturerSource } from 'electron'
 import type { ChannelKind, NewSound, RtcSignal, ScreenChoice, ScreenSource, WindowTrack } from '../shared/types'
 import { Core } from './core'
+import { setMuteHotkey } from './hotkeys'
 import { Updater } from './updater'
 import { isVpnHelper, openHelperTunnel, runVpnHelper } from './vpn/helper'
 import { windowsFile } from './system'
@@ -260,6 +261,11 @@ function setupIpc(): void {
     return { surface: isWindow ? 'window' : 'screen', name: source.name, follow: isWindow }
   })
   ipcMain.handle('screen:stop-tracking', () => stopWindowTracking())
+
+  // Atalho global de mutar: a interface escolhe a tecla; desligado até a pessoa ativar.
+  ipcMain.handle('hotkey:mute', (_e, accelerator: unknown) =>
+    setMuteHotkey(typeof accelerator === 'string' ? accelerator : null, () => send('hotkey:mute'))
+  )
 
   ipcMain.handle('vpn:start', () => core.startVpn())
   ipcMain.handle('vpn:stop', () => core.stopVpn())

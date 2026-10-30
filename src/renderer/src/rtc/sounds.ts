@@ -1,13 +1,15 @@
 /**
  * Saída de áudio dos efeitos do app: sons curtos da sala de voz (sintetizados,
- * duas notas subindo quando alguém entra, descendo quando alguém sai) e os sons
- * do soundboard.
+ * duas notas subindo quando alguém entra, descendo quando alguém sai; mais
+ * graves para o atalho de mutar/desmutar) e os sons do soundboard.
  */
-export type Cue = 'join' | 'leave'
+export type Cue = 'join' | 'leave' | 'mute' | 'unmute'
 
 const NOTES: Record<Cue, number[]> = {
   join: [587.33, 880], // ré → lá
-  leave: [880, 587.33] // lá → ré
+  leave: [880, 587.33], // lá → ré
+  mute: [523.25, 392], // dó → sol
+  unmute: [392, 523.25] // sol → dó
 }
 const VOLUME = 0.16
 const NOTE_GAP_S = 0.09

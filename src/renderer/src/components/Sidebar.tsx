@@ -291,7 +291,7 @@ function UserPanel({ state, onSettings }: { state: AppState; onSettings(): void 
           {vpn.state === 'on' ? `VPN ${vpn.ip}` : vpn.state === 'starting' ? 'VPN iniciando…' : 'VPN desligada'}
         </div>
       </div>
-      <button className={`icon-button${c.muted ? ' off' : ''}`} onClick={() => c.setMuted(!c.muted)} title={c.muted ? 'Ativar microfone' : 'Silenciar'}>
+      <button className={`icon-button${c.muted ? ' off' : ''}`} onClick={() => c.setMuted(!c.muted)} title={c.muteTitle}>
         {c.muted || c.deafened ? <MicOffIcon size={18} /> : <MicIcon size={18} />}
       </button>
       <button
