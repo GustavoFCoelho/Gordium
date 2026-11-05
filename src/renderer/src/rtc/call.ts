@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { hotkeyFromAccelerator, isHotkey, type Hotkey } from '../../../shared/hotkeys'
 import type { AppState, PeerInfo, RtcSignal, ScreenChoice } from '../../../shared/types'
 import { toast } from '../store'
+import { denoise, isNoiseMode, type Denoised, type NoiseMode } from './noise'
 import { playSoundboard } from './soundboard'
 import { canProcessVideo, followWindow, windowCapture } from './windowCapture'
 import { playCue, type Cue } from './sounds'
@@ -51,7 +52,8 @@ export interface DeviceSettings {
   micId: string
   camId: string
   outputId: string
-  noiseSuppression: boolean
+  /** Supressão de ruído do microfone (ver noise.ts). */
+  noise: NoiseMode
   /** Sons quando alguém entra ou sai da sala de voz. */
   sounds: boolean
   /** Volume do soundboard, 0–1. */
@@ -107,7 +109,7 @@ class CallManager {
     micId: '',
     camId: '',
     outputId: '',
-    noiseSuppression: true,
+    noise: 'ai',
     sounds: true,
     soundboardVolume: 0.6,
     muteHotkeyEnabled: false,
@@ -132,6 +134,8 @@ class CallManager {
   private roomMembers: Set<string> | null = null
 
   private lastSfx = new Map<string, number>()
+  /** Fecha o microfone atual (e o processamento de ruído dele). */
+  private closeMic: (() => void) | null = null
   private rtcConfig: RTCConfiguration = { iceServers: STUN_SERVERS, bundlePolicy: 'max-bundle' }
 
   constructor() {
@@ -139,7 +143,7 @@ class CallManager {
     api.onSfx((network, peer, sound, channel) => {
       if (network === this.network && channel === this.channel && this.allowSfx(peer)) this.playSfx(sound)
     })
-    this.migrateHotkey()
+    this.migrateSettings()
     api.onMuteHotkey(() => this.toggleMuteByHotkey())
     void this.applyHotkey()
   }
@@ -191,7 +195,9 @@ class CallManager {
       bundlePolicy: 'max-bundle'
     }
     try {
-      this.local.mic = await this.openMic()
+      const mic = await this.openMic()
+      this.closeMic = mic.close
+      this.local.mic = mic.track
     } catch (err) {
       this.error = `Microfone indisponível: ${(err as Error).message}`
     }
@@ -218,6 +224,8 @@ class CallManager {
       this.local[k]?.stop()
       this.local[k] = null
     }
+    this.closeMic?.()
+    this.closeMic = null
     if (this.meterTimer !== null) clearInterval(this.meterTimer)
     this.meterTimer = null
     for (const key of [...this.meters.keys()]) this.unwatch(key)
@@ -323,12 +331,20 @@ class CallManager {
   }
 
   /** A 0.1.10 guardava o atalho como texto ("Ctrl+Alt+Shift+F9"); converte para o formato novo. */
-  private migrateHotkey(): void {
-    const saved = this.settings as DeviceSettings & { muteHotkey?: unknown }
-    if (!('muteHotkey' in saved) && (saved.muteKey === null || isHotkey(saved.muteKey))) return
-    const { muteHotkey, ...rest } = saved
+  /**
+   * Configurações salvas por versões antigas: a 0.1.10 guardava o atalho como
+   * texto ("Ctrl+Alt+Shift+F9"); até a 0.1.12 a supressão de ruído era só
+   * ligada/desligada (ligada passa a ser a de IA).
+   */
+  private migrateSettings(): void {
+    const saved = this.settings as DeviceSettings & { muteHotkey?: unknown; noiseSuppression?: unknown }
+    const hotkeyOk = !('muteHotkey' in saved) && (saved.muteKey === null || isHotkey(saved.muteKey))
+    const noiseOk = !('noiseSuppression' in saved) && isNoiseMode(saved.noise)
+    if (hotkeyOk && noiseOk) return
+    const { muteHotkey, noiseSuppression, ...rest } = saved
     const muteKey = isHotkey(rest.muteKey) ? rest.muteKey : typeof muteHotkey === 'string' ? hotkeyFromAccelerator(muteHotkey) : null
-    this.settings = { ...rest, muteKey }
+    const noise: NoiseMode = noiseSuppression === false ? 'off' : isNoiseMode(rest.noise) ? rest.noise : 'ai'
+    this.settings = { ...rest, muteKey, noise }
     localStorage.setItem('gordium.devices', JSON.stringify(this.settings))
   }
 
@@ -377,13 +393,14 @@ class CallManager {
     const prev = this.settings
     this.settings = { ...prev, ...next }
     localStorage.setItem('gordium.devices', JSON.stringify(this.settings))
-    if (this.network && (prev.micId !== this.settings.micId || prev.noiseSuppression !== this.settings.noiseSuppression)) {
+    if (this.network && (prev.micId !== this.settings.micId || prev.noise !== this.settings.noise)) {
       try {
         const mic = await this.openMic()
-        this.local.mic?.stop()
-        this.setLocal('mic', mic)
+        this.closeMic?.()
+        this.closeMic = mic.close
+        this.setLocal('mic', mic.track)
         this.applyMute()
-        this.watch(this.selfId, mic)
+        this.watch(this.selfId, mic.track)
         this.error = null
       } catch (err) {
         this.error = `Microfone indisponível: ${(err as Error).message}`
@@ -478,16 +495,34 @@ class CallManager {
 
   // --- mídia local -----------------------------------------------------------
 
-  private async openMic(): Promise<MediaStreamTrack> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: this.settings.micId ? { exact: this.settings.micId } : undefined,
-        echoCancellation: true,
-        noiseSuppression: this.settings.noiseSuppression,
-        autoGainControl: true
-      }
-    })
-    return stream.getAudioTracks()[0]
+  /** Abre o microfone com a supressão de ruído escolhida. */
+  private async openMic(): Promise<Denoised> {
+    const open = async (browserNoise: boolean): Promise<MediaStreamTrack> => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: this.settings.micId ? { exact: this.settings.micId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: browserNoise,
+          autoGainControl: true
+        }
+      })
+      return stream.getAudioTracks()[0]
+    }
+    if (this.settings.noise !== 'ai') {
+      const track = await open(this.settings.noise === 'browser')
+      return { track, close: () => track.stop() }
+    }
+    // A IA trabalha melhor com o som cru: sem a supressão do navegador antes dela.
+    const raw = await open(false)
+    try {
+      return await denoise(raw)
+    } catch (err) {
+      console.warn('[ruído] supressão por IA indisponível:', err)
+      raw.stop()
+      toast('A supressão de ruído por IA não carregou; usando a leve.', 'error')
+      const track = await open(true)
+      return { track, close: () => track.stop() }
+    }
   }
 
   private setLocal(kind: MediaKind, track: MediaStreamTrack | null): void {

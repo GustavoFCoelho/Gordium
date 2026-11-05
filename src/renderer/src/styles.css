@@ -1298,6 +1298,14 @@ label select {
   column-gap: 16px;
 }
 
+.field-hint {
+  margin-top: -2px;
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
 .hotkey-setting .check {
   margin-bottom: 10px;
 }

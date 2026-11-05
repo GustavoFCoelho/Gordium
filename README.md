@@ -7,6 +7,10 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
   "+" ao lado de cada categoria). Cada canal de voz é uma sala separada.
 - **Sala de voz**: mute, ensurdecer, indicador de quem está falando, volume por pessoa e sons de
   entrada/saída.
+- **Supressão de ruído por IA** (padrão): o microfone passa pelo [GTCRN](https://github.com/Xiaobin-Rong/gtcrn),
+  uma rede neural pequena que roda no próprio computador (via
+  [web-noise-suppressor](https://github.com/sapphi-red/web-noise-suppressor)) e tira teclado,
+  ventilador e barulho de casa e de rua. Também há a opção leve (a do navegador) ou desligada.
 - **Atalho para mutar/desmutar** (opcional, vem desligado): uma tecla só (ou combinação, ou botão
   lateral do mouse) escolhida nas configurações. Funciona com o Gordium em segundo plano, dentro de um
   jogo, e a tecla continua funcionando normalmente nos outros programas.
@@ -122,7 +126,7 @@ instalador local sem publicar nada: `npm run dist` (sai em `dist/`).
 | Comando | O que testa | Requisitos |
 |---|---|---|
 | `npm run test:net` | 3 identidades se acham pela DHT pública, autenticam, sincronizam o chat, rejeitam mensagem forjada, trocam estado de voz, sinalização e pacotes da VPN (datagrama e fallback); duas redes ao mesmo tempo; reconexão após reiniciar | internet |
-| `npm run test:e2e` | duas instâncias reais do app controladas pelo DevTools: criar rede, convite, chat, sala de voz, áudio chegando, câmera, tela em 1080p, mute e saída da chamada | internet |
+| `npm run test:e2e` | duas instâncias reais do app controladas pelo DevTools (o microfone falso fala, com uma voz do Windows): criar rede, convite, chat, sala de voz, áudio chegando, supressão de ruído (ruído branco no microfone, medido do outro lado), câmera, tela em 1080p, mute e saída da chamada | internet |
 | `npm run test:e2e:relay` | o mesmo, mas a chamada só pode passar pelo relay na conexão da rede (como entre redes com NAT simétrico); confere que o caminho escolhido é relay e que a tela chega fluida | internet |
 | `npm run test:vpn` | adaptador e roteamento da VPN com um peer simulado: Windows → túnel, ping injetado respondido pelo Windows e descarte de IP forjado | **terminal como administrador** |
 | `npm run test:vpn-helper` | o caminho do app: roda como usuário comum, abre o processo auxiliar pelo UAC e testa os dois sentidos do túnel pelo pipe; ao fechar, confere que o adaptador sumiu | aceitar o UAC |

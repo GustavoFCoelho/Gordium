@@ -1,8 +1,8 @@
 // Teste ponta a ponta: abre duas instâncias do Gordium (dois usuários, perfis
 // separados) e as controla pelo DevTools Protocol, como uma pessoa faria:
 // criar rede, entrar com o convite, conversar, entrar na sala de voz, ligar a
-// câmera, compartilhar a tela, mutar e sair. Câmera/microfone são os falsos do
-// Chromium. Capturas de tela vão para out/e2e/.
+// câmera, compartilhar a tela, mutar e sair. Câmera e microfone são os falsos do
+// Chromium (o microfone fala, com uma voz do Windows). Capturas de tela vão para out/e2e/.
 //
 // Uso: npm run test:e2e   (faz o build antes; precisa de internet)
 //      npm run test:e2e:relay   (a chamada só pode passar pelo relay P2P do Gordium,
@@ -22,9 +22,31 @@ const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a)
 const RELAY = process.argv.includes('--relay')
 
+/**
+ * Fala em português (voz do próprio Windows) para o microfone falso: o bipe
+ * padrão do Chromium não é voz, e a supressão de ruído por IA o apaga.
+ */
+const VOICE = join(SHOTS, 'voz.wav')
+function writeVoice(path) {
+  const script = [
+    'Add-Type -AssemblyName System.Speech',
+    '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    "$voice = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -eq 'pt-BR' } | Select-Object -First 1",
+    'if ($voice) { $s.SelectVoice($voice.VoiceInfo.Name) }',
+    '$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(48000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)',
+    `$s.SetOutputToWaveFile('${path.replace(/'/g, "''")}', $f)`,
+    "$s.Speak('Fala galera, bora entrar na sala de voz? Hoje tem duelo e eu quero testar o Gordium. Alguém está me ouvindo bem?')",
+    '$s.Dispose()'
+  ].join('; ')
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script])
+  if (res.status !== 0) throw new Error('não consegui gerar a voz de teste: ' + res.stderr)
+}
+writeVoice(VOICE)
+
 function launch(profile, port) {
   rmSync(join(process.env.APPDATA ?? '', `Gordium-${profile}`), { recursive: true, force: true })
-  return spawn(electron, ['.', `--remote-debugging-port=${port}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], {
+  const media = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${VOICE}`]
+  return spawn(electron, ['.', `--remote-debugging-port=${port}`, ...media], {
     cwd: ROOT,
     env: { ...process.env, GORDIUM_PROFILE: profile, ...(RELAY ? { GORDIUM_FORCE_RELAY: '1' } : {}) },
     stdio: 'ignore'
@@ -242,6 +264,49 @@ const screenStats = `(async () => {
   return { frames, lost, packets }
 })()`
 
+/** Nome das trilhas de áudio que estão sendo enviadas (a do microfone processado vem de um nó de áudio). */
+const sentAudioLabels = `(() => window.__pcs.filter((pc) => pc.connectionState === 'connected').flatMap((pc) => pc.getSenders()).filter((s) => s.track?.kind === 'audio').map((s) => s.track.label))()`
+
+/** Troca o microfone por ruído branco puro (para medir a supressão de ruído). */
+const noiseMicrophone = `(() => {
+  const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+  navigator.mediaDevices.getUserMedia = async (constraints) => {
+    if (!constraints?.audio || constraints.video) return original(constraints)
+    const ctx = new AudioContext({ sampleRate: 48000 })
+    const buffer = ctx.createBuffer(1, 48000 * 2, 48000)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.3
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.loop = true
+    const out = ctx.createMediaStreamDestination()
+    source.connect(out)
+    source.start()
+    return out.stream
+  }
+  return true
+})()`
+
+/** Energia acumulada do áudio recebido (para tirar a potência média num intervalo). */
+const receivedAudioEnergy = `(async () => {
+  let energy = 0, seconds = 0
+  for (const pc of window.__pcs) {
+    if (pc.connectionState !== 'connected') continue
+    const stats = await pc.getStats()
+    stats.forEach((s) => {
+      if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+        energy += s.totalAudioEnergy ?? 0
+        seconds += s.totalSamplesDuration ?? 0
+      }
+    })
+  }
+  return { energy, seconds }
+})()`
+
+/** Escolhe uma opção num <select> controlado pelo React. */
+const choose = (selector, value) =>
+  `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('não achei ${selector}'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('change', { bubbles: true })); return true })()`
+
 /** Quantas pessoas aparecem embaixo de um canal de voz na barra lateral. */
 const usersInVoice = (name) =>
   `([...document.querySelectorAll('.channels > div')].find(d => d.querySelector('.channel')?.textContent.includes(${JSON.stringify(name)}))?.querySelectorAll('.voice-user').length ?? -1)`
@@ -314,6 +379,9 @@ try {
     const paths = await A.evaluate(selectedPaths)
     log('  caminho da chamada:', paths.join(', ') || '(nenhum)')
     if (RELAY && (paths.length === 0 || paths.some((p) => p !== 'relay/relay'))) throw new Error('a chamada não passou pelo relay')
+    const labels = await A.evaluate(sentAudioLabels)
+    log('  microfone enviado pela Alice:', labels.join(', '))
+    if (!labels.includes('MediaStreamAudioDestinationNode')) throw new Error('o microfone não passou pela supressão de ruído por IA')
   }
   await A.until('Alice ouve o som de entrada do Bruno', cuesAre([587, 880, 587, 880]), 10000)
   await B.until('Bruno ouve só o próprio som de entrada', cuesAre([587, 880]), 5000)
@@ -405,6 +473,26 @@ try {
   await sleep(1500)
   await A.shot('04-chamada-alice')
   await B.shot('05-chamada-bruno')
+
+  // supressão de ruído: com o microfone da Alice só fazendo ruído, o Bruno mede o que chega sem e com a IA
+  await A.evaluate(noiseMicrophone)
+  await A.evaluate(click('.icon-button[title="Configurações"]'))
+  await A.until('configurações abertas, supressão por IA', `document.querySelector('.noise-select')?.value === 'ai'`)
+  const powerFor = async (mode) => {
+    await A.evaluate(choose('.noise-select', mode))
+    await sleep(2500)
+    const a = await B.evaluate(receivedAudioEnergy)
+    await sleep(2000)
+    const b = await B.evaluate(receivedAudioEnergy)
+    const power = (b.energy - a.energy) / Math.max(1e-9, b.seconds - a.seconds)
+    return 10 * Math.log10(Math.max(power, 1e-12))
+  }
+  const offDb = await powerFor('off')
+  const aiDb = await powerFor('ai')
+  log(`  ruído que chega no Bruno: ${offDb.toFixed(1)} dB sem supressão, ${aiDb.toFixed(1)} dB com a IA (${(offDb - aiDb).toFixed(1)} dB a menos)`)
+  if (offDb < -40) throw new Error('o ruído nem chegou sem a supressão')
+  if (offDb - aiDb < 15) throw new Error('a supressão por IA tirou pouco ruído')
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
 
   await B.evaluate(click('.call-controls .round-button[title="Silenciar"]'))
   await A.until('Alice vê o Bruno mutado', `[...document.querySelectorAll('.voice-user')].some(e => e.textContent.includes('Bruno') && e.querySelector('.voice-flags svg'))`, 10000)

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { hotkeyFromKeyDown, hotkeyFromMouse, hotkeyFromRelease, modifiersLabel, type Hotkey } from '../../../shared/hotkeys'
 import type { AppState, ChannelInfo, ChannelKind, NetworkInfo, ScreenSource, UpdateState } from '../../../shared/types'
 import { call, SCREEN_QUALITIES, useCall } from '../rtc/call'
+import { NOISE_MODES, type NoiseMode } from '../rtc/noise'
 import { decodeAudioFile, encodeSound, MAX_SOUND_SECONDS, suggestSegment, type Segment } from '../rtc/soundboard'
 import { toast, useUpdate } from '../store'
 import { copyText, errorText, formatBytes } from '../util'
@@ -519,9 +520,16 @@ export function SettingsModal({ state, onClose }: { state: AppState; onClose(): 
             Câmera
             <DeviceSelect kind="videoinput" devices={devices} value={c.settings.camId} onChange={(camId) => setDevice({ camId })} />
           </label>
-          <label className="check">
-            <input type="checkbox" checked={c.settings.noiseSuppression} onChange={(e) => setDevice({ noiseSuppression: e.target.checked })} />
+          <label>
             Supressão de ruído
+            <select className="noise-select" value={c.settings.noise} onChange={(e) => setDevice({ noise: e.target.value as NoiseMode })}>
+              {NOISE_MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">{NOISE_MODES.find((m) => m.value === c.settings.noise)?.hint}</span>
           </label>
           <label className="check">
             <input type="checkbox" checked={c.settings.sounds} onChange={(e) => setDevice({ sounds: e.target.checked })} />

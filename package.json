@@ -21,6 +21,7 @@
     "dist": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "electron-updater": "^6.8.11",
     "hypercore-crypto": "^3.7.0",
     "hyperswarm": "^4.17.2",
