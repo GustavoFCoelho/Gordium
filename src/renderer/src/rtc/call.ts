@@ -5,7 +5,7 @@ import { toast } from '../store'
 import { denoise, isNoiseMode, type Denoised, type NoiseMode } from './noise'
 import { playSoundboard } from './soundboard'
 import { canProcessVideo, followWindow, windowCapture } from './windowCapture'
-import { playCue, type Cue } from './sounds'
+import { audioOut, playCue, type Cue } from './sounds'
 
 const api = window.gordium
 
@@ -67,6 +67,21 @@ export interface DeviceSettings {
 /** Um som do soundboard por pessoa a cada tanto, para ninguém metralhar a sala. */
 const SOUNDBOARD_COOLDOWN_MS = 800
 
+/** Volume de cada pessoa vai até 200%; acima de 100% o som passa por um amplificador. */
+export const MAX_VOLUME = 2
+
+/** Cada pessoa tem dois volumes: o da voz e o do áudio da tela que ela transmite. */
+export type VolumeKind = 'voice' | 'screen'
+
+/** Amplificador (Web Audio) de um dos áudios de uma pessoa, só quando o volume passa de 100%. */
+interface Boost {
+  stream: MediaStream
+  source: MediaStreamAudioSourceNode
+  gain: GainNode
+  /** Segura os picos: voz alta a 200% estouraria com distorção. */
+  limiter: DynamicsCompressorNode
+}
+
 interface Link {
   peer: string
   cid: string
@@ -77,6 +92,7 @@ interface Link {
   queue: Promise<void>
   audio: HTMLAudioElement
   screenAudio: HTMLAudioElement
+  boost: Record<VolumeKind, Boost | null>
 }
 
 interface Meter {
@@ -85,6 +101,8 @@ interface Meter {
   data: Uint8Array<ArrayBuffer>
   last: number
 }
+
+const volumeKey = (peer: string, kind: VolumeKind): string => (kind === 'voice' ? peer : `${peer}:screen`)
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -172,8 +190,9 @@ class CallManager {
     return this.links.get(peer)?.pc.connectionState ?? null
   }
 
-  getVolume(peer: string): number {
-    return this.volumes[peer] ?? 1
+  /** Volume (0 a 2) da voz ou da transmissão de uma pessoa, guardado por identidade. */
+  getVolume(peer: string, kind: VolumeKind = 'voice'): number {
+    return this.volumes[volumeKey(peer, kind)] ?? 1
   }
 
   // --- entrar / sair ---------------------------------------------------------
@@ -382,8 +401,12 @@ class CallManager {
     this.changed()
   }
 
-  setVolume(peer: string, volume: number): void {
-    this.volumes[peer] = volume
+  setVolume(peer: string, volume: number, kind: VolumeKind = 'voice'): void {
+    const key = volumeKey(peer, kind)
+    const value = Math.min(MAX_VOLUME, Math.max(0, volume))
+    // 100% é o padrão: não precisa ficar guardado.
+    if (value === 1) delete this.volumes[key]
+    else this.volumes[key] = value
     localStorage.setItem('gordium.volumes', JSON.stringify(this.volumes))
     this.applyVolumes()
     this.changed()
@@ -542,13 +565,50 @@ class CallManager {
     for (const link of this.links.values()) this.applyVolume(link)
   }
 
+  /**
+   * Até 100%, o próprio elemento de áudio toca no volume escolhido (o caminho
+   * de sempre). Acima disso, o elemento fica mudo, mas ligado: sem ele o
+   * Chromium não entrega o áudio remoto ao Web Audio. O som passa então por um
+   * ganho no contexto de saída do app, o mesmo do soundboard.
+   */
   private applyVolume(link: Link): void {
-    const volume = Math.min(1, Math.max(0, this.getVolume(link.peer)))
-    for (const el of [link.audio, link.screenAudio]) {
-      el.volume = volume
-      el.muted = this.deafened
+    for (const kind of ['voice', 'screen'] as const) {
+      const el = kind === 'voice' ? link.audio : link.screenAudio
+      const volume = this.deafened ? 0 : this.getVolume(link.peer, kind)
+      const boosted = volume > 1 && el.srcObject instanceof MediaStream
+      el.volume = Math.min(1, volume)
+      el.muted = this.deafened || boosted
       if (this.settings.outputId && 'setSinkId' in el) void el.setSinkId(this.settings.outputId).catch(() => {})
+      this.setBoost(link, kind, boosted ? volume : 0)
     }
+  }
+
+  /** Liga, ajusta ou desliga (ganho 0) o amplificador de um dos áudios da pessoa. */
+  private setBoost(link: Link, kind: VolumeKind, gain: number): void {
+    const el = kind === 'voice' ? link.audio : link.screenAudio
+    const stream = el.srcObject instanceof MediaStream ? el.srcObject : null
+    let boost = link.boost[kind]
+    if (boost && (gain === 0 || boost.stream !== stream)) {
+      boost.source.disconnect()
+      boost.gain.disconnect()
+      boost.limiter.disconnect()
+      boost = link.boost[kind] = null
+    }
+    if (gain === 0 || !stream) return
+    const ac = audioOut(this.settings.outputId)
+    if (!boost) {
+      const source = ac.createMediaStreamSource(stream)
+      const node = ac.createGain()
+      const limiter = ac.createDynamicsCompressor()
+      limiter.threshold.value = -2
+      limiter.knee.value = 0
+      limiter.ratio.value = 20
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.1
+      source.connect(node).connect(limiter).connect(ac.destination)
+      boost = link.boost[kind] = { stream, source, gain: node, limiter }
+    }
+    boost.gain.gain.value = gain
   }
 
   private applyEncodings(link: Link): void {
@@ -582,7 +642,8 @@ class CallManager {
       pending: [],
       queue: Promise.resolve(),
       audio: new Audio(),
-      screenAudio: new Audio()
+      screenAudio: new Audio(),
+      boost: { voice: null, screen: null }
     }
     link.audio.autoplay = true
     link.screenAudio.autoplay = true
@@ -629,6 +690,8 @@ class CallManager {
   private closeLink(link: Link, sendBye: boolean): void {
     if (sendBye && this.network) this.signal(link, { bye: true })
     link.pc.close()
+    this.setBoost(link, 'voice', 0)
+    this.setBoost(link, 'screen', 0)
     link.audio.srcObject = null
     link.screenAudio.srcObject = null
     if (this.links.get(link.peer) === link) {

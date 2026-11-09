@@ -4,7 +4,8 @@ import { call, useCall } from '../rtc/call'
 import { toast, useUnread } from '../store'
 import { errorText } from '../util'
 import { Avatar } from './Avatar'
-import type { MenuItem, MenuState } from './ContextMenu'
+import type { MenuAction, MenuItem, MenuState } from './ContextMenu'
+import { volumeMenuItems } from './Volume'
 import {
   ChevronDownIcon,
   HashIcon,
@@ -100,7 +101,7 @@ export function Sidebar(props: Props) {
     return () => window.removeEventListener('mousedown', close)
   }, [menu])
 
-  const createItems: MenuItem[] = [
+  const createItems: MenuAction[] = [
     { label: 'Criar canal de texto', icon: <HashIcon size={16} />, onClick: () => onChannelAction({ type: 'create', kind: 'text' }) },
     { label: 'Criar canal de voz', icon: <VolumeIcon size={16} />, onClick: () => onChannelAction({ type: 'create', kind: 'voice' }) }
   ]
@@ -117,6 +118,14 @@ export function Sidebar(props: Props) {
       }
     }
     onContextMenu({ x: e.clientX, y: e.clientY, items })
+  }
+
+  /** Botão direito numa pessoa da sala de voz: volumes dela (os nossos não têm o que ajustar). */
+  const openUserMenu = (e: ReactMouseEvent, user: VoiceUser) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (user.id === state.self.id) return
+    onContextMenu({ x: e.clientX, y: e.clientY, items: volumeMenuItems(user.id, !!user.voice?.screen) })
   }
 
   const usersIn = (channel: string): VoiceUser[] => [
@@ -158,19 +167,17 @@ export function Sidebar(props: Props) {
             >
               <UserPlusIcon size={16} /> Convidar pessoas
             </button>
-            {createItems.map((item) =>
-              item === 'separator' ? null : (
-                <button
-                  key={item.label}
-                  onClick={() => {
-                    setMenu(false)
-                    item.onClick()
-                  }}
-                >
-                  {item.icon} {item.label}
-                </button>
-              )
-            )}
+            {createItems.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => {
+                  setMenu(false)
+                  item.onClick()
+                }}
+              >
+                {item.icon} {item.label}
+              </button>
+            ))}
             <button
               className="danger"
               onClick={() => {
@@ -221,7 +228,7 @@ export function Sidebar(props: Props) {
               </button>
               <div className="voice-users">
                 {usersIn(ch.id).map((u) => (
-                  <div key={u.id} className="voice-user">
+                  <div key={u.id} className="voice-user" onContextMenu={(e) => openUserMenu(e, u)}>
                     <Avatar id={u.id} name={u.name} size={24} speaking={here && c.speaking.has(u.id)} />
                     <span className="ellipsis">{u.name}</span>
                     <span className="voice-flags">

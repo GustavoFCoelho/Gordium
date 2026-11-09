@@ -193,6 +193,7 @@ export function App() {
                   network={network}
                   onScreen={() => setModal({ type: 'screen' })}
                   onSoundboard={() => setSoundboard((open) => !open)}
+                  onContextMenu={setMenu}
                 />
               ) : (
                 <ChatView network={network} channel={textChannel} />

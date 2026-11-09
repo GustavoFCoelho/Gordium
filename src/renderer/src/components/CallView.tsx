@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type { AppState, NetworkInfo, VoiceState } from '../../../shared/types'
 import { useCall } from '../rtc/call'
 import { Avatar } from './Avatar'
+import type { MenuState } from './ContextMenu'
 import {
   HeadphonesIcon,
   HeadphonesOffIcon,
@@ -15,6 +16,7 @@ import {
   MusicIcon
 } from './Icons'
 import { toggleCamera } from './Sidebar'
+import { volumeMenuItems, VolumeSlider } from './Volume'
 
 interface Tile {
   key: string
@@ -41,7 +43,7 @@ function Video({ track, mirror, contain }: { track: MediaStreamTrack; mirror: bo
   return <video ref={ref} autoPlay playsInline muted className={`${mirror ? 'mirror' : ''} ${contain ? 'contain' : ''}`} />
 }
 
-function TileView({ tile, focused, onFocus }: { tile: Tile; focused: boolean; onFocus(): void }) {
+function TileView({ tile, focused, onFocus, onMenu }: { tile: Tile; focused: boolean; onFocus(): void; onMenu(e: ReactMouseEvent, tile: Tile): void }) {
   const c = useCall()
   const ref = useRef<HTMLDivElement>(null)
   const speaking = tile.kind === 'user' && c.speaking.has(tile.id)
@@ -51,6 +53,7 @@ function TileView({ tile, focused, onFocus }: { tile: Tile; focused: boolean; on
       ref={ref}
       className={`tile tile-${tile.kind}${speaking ? ' speaking' : ''}${focused ? ' focused' : ''}`}
       onClick={onFocus}
+      onContextMenu={(e) => onMenu(e, tile)}
       title={tile.kind === 'screen' ? 'Clique para destacar · tela cheia no canto' : undefined}
     >
       {tile.track ? (
@@ -71,15 +74,11 @@ function TileView({ tile, focused, onFocus }: { tile: Tile; focused: boolean; on
       </div>
       {connecting && <div className="tile-status">{tile.state === 'failed' ? 'Sem conexão, tentando de novo…' : 'Conectando…'}</div>}
       <div className="tile-actions" onClick={(e) => e.stopPropagation()}>
-        {!tile.self && tile.kind === 'user' && (
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={c.getVolume(tile.id)}
-            onChange={(e) => c.setVolume(tile.id, Number(e.target.value))}
-            title={`Volume de ${tile.name}`}
+        {!tile.self && (
+          <VolumeSlider
+            value={c.getVolume(tile.id, tile.kind === 'screen' ? 'screen' : 'voice')}
+            label={tile.kind === 'screen' ? `Volume da transmissão de ${tile.name}` : `Volume de ${tile.name}`}
+            onChange={(v) => c.setVolume(tile.id, v, tile.kind === 'screen' ? 'screen' : 'voice')}
           />
         )}
         <button className="icon-button" title="Tela cheia" onClick={() => void ref.current?.requestFullscreen()}>
@@ -94,12 +93,14 @@ export function CallView({
   state,
   network,
   onScreen,
-  onSoundboard
+  onSoundboard,
+  onContextMenu
 }: {
   state: AppState
   network: NetworkInfo
   onScreen(): void
   onSoundboard(): void
+  onContextMenu(menu: MenuState): void
 }) {
   const c = useCall()
   const [focus, setFocus] = useState<string | null>(null)
@@ -145,6 +146,13 @@ export function CallView({
     })
   }
 
+  /** Botão direito num quadro de outra pessoa: volumes dela (voz e, se transmitindo, a tela). */
+  const openMenu = (e: ReactMouseEvent, tile: Tile) => {
+    e.preventDefault()
+    if (tile.self) return
+    onContextMenu({ x: e.clientX, y: e.clientY, items: volumeMenuItems(tile.id, !!tile.voice?.screen) })
+  }
+
   const focused = tiles.find((t) => t.key === focus) ?? null
   const others = focused ? tiles.filter((t) => t !== focused) : tiles
 
@@ -153,12 +161,12 @@ export function CallView({
       <div className={`call-stage${focused ? ' has-focus' : ''}`}>
         {focused && (
           <div className="call-focus">
-            <TileView tile={focused} focused onFocus={() => setFocus(null)} />
+            <TileView tile={focused} focused onFocus={() => setFocus(null)} onMenu={openMenu} />
           </div>
         )}
         <div className={focused ? 'call-strip' : `call-grid n${Math.min(others.length, 9)}`}>
           {others.map((t) => (
-            <TileView key={t.key} tile={t} focused={false} onFocus={() => setFocus(t.key)} />
+            <TileView key={t.key} tile={t} focused={false} onFocus={() => setFocus(t.key)} onMenu={openMenu} />
           ))}
         </div>
       </div>

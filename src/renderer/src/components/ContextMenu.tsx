@@ -1,7 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { MenuVolume } from './Volume'
+
+export interface MenuAction {
+  label: string
+  icon?: ReactNode
+  danger?: boolean
+  onClick(): void
+}
 
 export type MenuItem =
-  | { label: string; icon?: ReactNode; danger?: boolean; onClick(): void }
+  | MenuAction
+  /** Controle de volume que fica no menu enquanto a pessoa ajusta. */
+  | { label: string; slider: { get(): number; set(volume: number): void } }
   | 'separator'
 
 export interface MenuState {
@@ -49,6 +59,8 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose(): voi
       {menu.items.map((item, i) =>
         item === 'separator' ? (
           <div key={i} className="context-sep" />
+        ) : 'slider' in item ? (
+          <MenuVolume key={i} label={item.label} get={item.slider.get} set={item.slider.set} />
         ) : (
           <button
             key={i}

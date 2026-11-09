@@ -264,6 +264,36 @@ const screenStats = `(async () => {
   return { frames, lost, packets }
 })()`
 
+/** Guarda os ganhos (GainNode) que o app criar, para medir o som que passa pelo amplificador de volume. */
+const trackGains = `(() => {
+  window.__gains = []
+  const create = AudioContext.prototype.createGain
+  AudioContext.prototype.createGain = function () {
+    const gain = create.call(this)
+    window.__gains.push(gain)
+    return gain
+  }
+  return true
+})()`
+
+/** Nível (RMS) do som que sai de um ganho com esse valor, olhando por ~1,5 s. */
+const levelThroughGain = (value) => `(async () => {
+  const gain = window.__gains.find((g) => Math.abs(g.gain.value - ${value}) < 0.01)
+  if (!gain) return -1
+  const tap = gain.context.createAnalyser()
+  tap.fftSize = 2048
+  gain.connect(tap)
+  const data = new Float32Array(tap.fftSize)
+  let best = 0
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50))
+    tap.getFloatTimeDomainData(data)
+    best = Math.max(best, Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length))
+  }
+  gain.disconnect(tap)
+  return best
+})()`
+
 /** Nome das trilhas de áudio que estão sendo enviadas (a do microfone processado vem de um nó de áudio). */
 const sentAudioLabels = `(() => window.__pcs.filter((pc) => pc.connectionState === 'connected').flatMap((pc) => pc.getSenders()).filter((s) => s.track?.kind === 'audio').map((s) => s.track.label))()`
 
@@ -322,6 +352,7 @@ try {
   await B.evaluate(`window.gordium.setName('Bruno')`)
   await A.evaluate(trackConnections)
   await B.evaluate(trackConnections)
+  await B.evaluate(trackGains)
   await A.shot('01-boas-vindas')
 
   await A.evaluate(click('.button', 'Criar uma rede'))
@@ -453,6 +484,23 @@ try {
   pressKey(VK_F13)
   await B.until('Bruno vê a Alice desmutada de novo', `!(${seesMuted('Alice')})`, 10000)
 
+  // volume por pessoa: o Bruno aumenta a voz da Alice para 200% pelo botão direito na sala de voz
+  await B.evaluate(rightClick('.voice-user', 'Alice'))
+  await B.until('menu de volume da Alice', `${hasText('.context-menu .menu-volume', 'Volume da voz')} && !${hasText('.context-menu', 'Volume da transmissão')}`, 5000)
+  await B.evaluate(fill('.context-menu .menu-volume input[type=range]', '200'))
+  await B.until('voz da Alice em 200%', `document.querySelector('.context-menu .volume-value')?.textContent === '200%'`, 5000)
+  {
+    const level = await B.evaluate(levelThroughGain(2))
+    log(`  voz da Alice passando pelo amplificador (200%): nível ${level.toFixed(3)}`)
+    await B.shot('04c-volume')
+    if (level < 0.01) throw new Error('acima de 100% a voz não passa pelo amplificador')
+  }
+  await B.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await B.until('o quadro da Alice mostra 200%', hasText('.tile-user .volume-value', '200%'), 5000)
+  await B.evaluate(rightClick('.voice-user', 'Alice'))
+  await B.evaluate(click('.context-menu button', 'Voltar os volumes para 100%'))
+  await B.until('volume da Alice de volta a 100%', `!${hasText('.tile-user .volume-value', '200%')} && ${hasText('.tile-user .volume-value', '100%')}`, 5000)
+
   await A.evaluate(click('.call-controls .round-button[title="Câmera"]'))
   await B.until('Bruno recebe a câmera da Alice', `[...document.querySelectorAll('.tile video')].some(v => v.videoWidth > 0 && !v.paused)`, 30000)
 
@@ -460,6 +508,10 @@ try {
   await B.until('seletor de tela carregou', `document.querySelectorAll('.source').length > 0`, 20000)
   await B.evaluate(click('.modal .button', 'Transmitir'))
   await A.until('Alice recebe a tela do Bruno', `[...document.querySelectorAll('.tile-screen video')].some(v => v.videoWidth > 0)`, 30000)
+  await A.evaluate(rightClick('.voice-user', 'Bruno'))
+  await A.until('menu do Bruno tem o volume da transmissão', hasText('.context-menu .menu-volume', 'Volume da transmissão'), 5000)
+  await A.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await A.until('o quadro da tela do Bruno tem volume próprio', `!!document.querySelector('.tile-screen .volume-slider')`, 5000)
   log('  resolução da tela recebida:', await A.evaluate(`[...document.querySelectorAll('.tile-screen video')].map(v => v.videoWidth + 'x' + v.videoHeight).join(',')`))
   {
     const before = await A.evaluate(screenStats)

@@ -1011,10 +1011,46 @@ a {
   opacity: 1;
 }
 
-.tile-actions input[type='range'] {
-  width: 90px;
+/* --- volume (0 a 200%) --- */
+
+.volume-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.volume-slider input[type='range'] {
+  width: 110px;
   padding: 0;
   accent-color: var(--accent);
+}
+
+.volume-value {
+  min-width: 38px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: white;
+}
+
+.volume-value.boost {
+  color: var(--yellow);
+}
+
+.menu-volume {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.menu-volume .volume-slider input[type='range'] {
+  width: 150px;
 }
 
 .tile-actions .icon-button {

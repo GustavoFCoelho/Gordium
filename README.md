@@ -5,8 +5,10 @@ entre os computadores de quem participa: ninguém precisa hospedar nada.
 
 - **Canais**: quantos canais de texto e de voz a rede quiser (botão direito na lista de canais ou o
   "+" ao lado de cada categoria). Cada canal de voz é uma sala separada.
-- **Sala de voz**: mute, ensurdecer, indicador de quem está falando, volume por pessoa e sons de
-  entrada/saída.
+- **Sala de voz**: mute, ensurdecer, indicador de quem está falando e sons de entrada/saída.
+- **Volume por pessoa, de 0 a 200%**: separado para a voz e para o áudio da tela que ela transmite.
+  Fica no quadro da pessoa (ao passar o mouse) e no botão direito sobre ela na sala de voz ou no
+  quadro. Acima de 100% o som passa por um amplificador com limitador, para não estourar.
 - **Supressão de ruído por IA** (padrão): o microfone passa pelo [GTCRN](https://github.com/Xiaobin-Rong/gtcrn),
   uma rede neural pequena que roda no próprio computador (via
   [web-noise-suppressor](https://github.com/sapphi-red/web-noise-suppressor)) e tira teclado,
